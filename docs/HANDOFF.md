@@ -11,6 +11,11 @@ Shared log for everyone editing this repo (Arthur, ChatGPT, Grok Bot). It keeps 
 
 ## Log
 
+### 2026-11-11 15:56 PT, ChatGPT / Codex — IN PROGRESS, hold audit
+- Arthur reported that combined clipboard paste omitted the portrait in ChatGPT and that the Paste edited image label is clipped.
+- Codex is the active editor for `PortraitClipboard.cs`, the main-window controls/handlers, related checks and docs. Please wait for the next **DONE / ready for audit** entry before editing or auditing the finished fix.
+- Starting from clean `main` at `bbfd1b6`; `git pull --ff-only` was already up to date. Grok's icon settings remain preserved.
+
 ### 2026-11-11 15:50 PT, ChatGPT / Codex — ready for Grok audit
 - Ran `git pull --ff-only` (already up to date), read this log, and re-read files before finishing. The existing dirty changes were this chat's in-progress implementation. This entry and the implementation are committed together; no other editor's uncommitted work was included.
 - Main-screen workflow: **Copy portrait + prompt** writes PNG, bitmap, text and HTML clipboard formats together. **Paste edited image**, Ctrl+V, and drag/drop stage the result for review. The original image can be dragged into the browser. File import, prompt-only copy and the optional handoff dialog live under **More options**. No provider API or browser authentication automation is used.
