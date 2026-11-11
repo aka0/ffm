@@ -33,9 +33,11 @@ public static class PortraitCommitService
         var edited = File.ReadAllBytes(session.PreviewPath);
         var configs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var shared = false;
+        var graphics = new DirectoryInfo(root);
+        while (!graphics.Name.Equals("graphics", StringComparison.OrdinalIgnoreCase)) graphics = graphics.Parent ?? throw new IOException("The graphics directory could not be found.");
         // Inspect all mappings, including real players and icons, before deciding whether
         // the source image can be replaced. The UI's newgen-only index cannot establish this.
-        foreach (var config in FacepackCatalog.FindConfigs(root))
+        foreach (var config in FacepackCatalog.FindConfigs(graphics.FullName))
         {
             using var reader = XmlReader.Create(config, XmlSettings());
             var beforeHash = PortraitEditSession.Hash(File.ReadAllBytes(config));
@@ -49,6 +51,7 @@ public static class PortraitCommitService
                 var matches = PointsTo(config, from, session.OriginalPath);
                 if (id == session.PlayerId)
                 {
+                    RequireInside(root, config);
                     if (!matches) throw new IOException("This player has another portrait mapping. Reload sources and resolve the conflict before accepting.");
                     selected = true;
                 }

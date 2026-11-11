@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 
 
@@ -33,6 +34,11 @@ public partial class MainWindow : Window
     private bool _updatingPrompt;
     private bool _isApplying;
     private bool _recoveryBlocked;
+    private PortraitEditSession? _preparedSession;
+    private bool _isImporting;
+    private CancellationTokenSource? _importCancellation;
+    private Point _dragStart;
+    private bool _updatingEdges;
 
     public MainWindow()
     {
@@ -44,6 +50,7 @@ public partial class MainWindow : Window
         _recoveryBlocked = recovery.Count > 0;
         if (_recoveryBlocked) { Activity.Text = "An interrupted portrait operation requires recovery before editing. Backups are retained."; Activity.ToolTip = string.Join(Environment.NewLine, recovery); }
         ProviderButton.Content = _provider + " · browser";
+        OpenProviderButton.Content = "Open " + _provider;
         var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var game = Path.Combine(docs, "Sports Interactive", "Football Manager 27");
         var defaultGraphics = Path.Combine(game, "graphics");
@@ -56,7 +63,7 @@ public partial class MainWindow : Window
 
     private void Sources_Click(object sender, RoutedEventArgs e)
     {
-        if (_isLoading || _isApplying) return;
+        if (_isLoading || _isApplying || _isImporting) return;
         var dialog = new SourcesWindow(_graphicsRoot, _savePath);
         dialog.Owner = this;
         if (dialog.ShowDialog() != true) return;
@@ -147,6 +154,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _loadCancellation?.Cancel();
+        _importCancellation?.Cancel();
         base.OnClosed(e);
     }
 
@@ -213,7 +221,7 @@ public partial class MainWindow : Window
         OriginalPath.Text = Path.GetFileName(file);
         OriginalPath.ToolTip = file;
         SetPresetControlsEnabled(true);
-        PreviewStatus.Text = "Choose portrait changes, edit in your browser, then import the result for comparison.";
+        PreviewStatus.Text = "Copy the portrait and prompt, then paste or drop the finished image here.";
     }
 
     private void SetPortrait(string? path)
@@ -226,7 +234,7 @@ public partial class MainWindow : Window
     private void SetPresetControlsEnabled(bool enabled)
     {
         HairstyleBox.IsEnabled = enabled; BeardBox.IsEnabled = enabled; AgeBox.IsEnabled = enabled && AgeBox.Items.Count > 1;
-        PreviewButton.Content = $"Edit in {_provider}…";
+        PreviewButton.Content = "Copy portrait + prompt";
         UpdatePreviewAvailability();
         AcceptButton.IsEnabled = false;
         RejectButton.IsEnabled = false;
@@ -244,8 +252,10 @@ public partial class MainWindow : Window
     {
         if (PreviewButton is null) return;
         var chosen = HairstyleBox.SelectedIndex > 0 || BeardBox.SelectedIndex > 0 || AgeBox.SelectedIndex > 0 || (_customPrompt && !string.IsNullOrWhiteSpace(PromptBox.Text));
-        PreviewButton.IsEnabled = !_isApplying && !_isLoading && !_recoveryBlocked && _currentPortrait is not null && HairstyleBox.IsEnabled && chosen;
-        PreviewButton.ToolTip = _recoveryBlocked ? "An interrupted operation needs recovery first." : "Choose a change or customize the prompt. The original and prompt will be prepared for your browser.";
+        PreviewButton.IsEnabled = !_isApplying && !_isLoading && !_isImporting && !_recoveryBlocked && _currentPortrait is not null && HairstyleBox.IsEnabled && chosen;
+        PreviewButton.ToolTip = _recoveryBlocked ? "An interrupted operation needs recovery first." : "Copies the original PNG, prompt text and rich content together. If the browser pastes only the image, use Copy prompt only under More options.";
+        PasteButton.IsEnabled = !_isApplying && !_isLoading && !_isImporting && !_recoveryBlocked && _preparedSession is not null;
+        ImportFileButton.IsEnabled = !_isApplying && !_isLoading && !_isImporting && !_recoveryBlocked && _currentPortrait is not null;
     }
     private void UpdatePrompt()
     {
@@ -262,11 +272,13 @@ public partial class MainWindow : Window
         finally { _updatingPrompt = false; }
     }
     private void ResetPrompt_Click(object sender, RoutedEventArgs e) { _customPrompt = false; UpdatePrompt(); RejectPending(); UpdatePreviewAvailability(); }
-    private void RejectPending()
+    private void RejectPending(bool discardPrepared = true)
     {
+        if (discardPrepared) _preparedSession = null;
         _pendingSession = null; _previewPath = null; _comparisonOriginal = false; EditedImage.Source = null;
         AcceptButton.IsEnabled = false; RejectButton.IsEnabled = false;
-        PreviewStatus.Text = _currentPortrait is null ? "Select a mapped player portrait to begin." : "Review the editing prompt, then edit the original in your browser.";
+        PreviewStatus.Text = _currentPortrait is null ? "Select a mapped player portrait to begin." : "Paste or drop the edited image here to review it.";
+        UpdatePreviewAvailability();
     }
     private PortraitEditSession PrepareSession(string prompt)
     {
@@ -276,6 +288,10 @@ public partial class MainWindow : Window
     }
     private void ShowPending(PortraitEditSession session)
     {
+        _updatingEdges = true;
+        try { CleanEdgesBox.IsChecked = session.EdgeCleanupEnabled; }
+        finally { _updatingEdges = false; }
+        _preparedSession = session;
         _pendingSession = session;
         _previewPath = session.PreviewPath;
         _comparisonOriginal = false;
@@ -284,7 +300,8 @@ public partial class MainWindow : Window
         AcceptButton.IsEnabled = true;
         RejectButton.IsEnabled = true;
         PreviewStatus.Text = "Review the same face, pose, clothing and crop. Accept applies this preview; Reject leaves the facepack unchanged.";
-        Activity.Text = "Edited image imported. Original dimensions and cutout transparency are preserved in the preview.";
+        Activity.Text = "Edited image imported. Original dimensions and cutout transparency are preserved." + (session.EdgeCleanupEnabled ? $" Edge cleanup corrected {session.CorrectedEdgePixels:N0} pixels near the silhouette." : " Edge cleanup is off.");
+        UpdatePreviewAvailability();
     }
     private void Preview_Click(object sender, RoutedEventArgs e)
     {
@@ -292,22 +309,156 @@ public partial class MainWindow : Window
         try
         {
             var session = PrepareSession(PromptBox.Text);
-            var dialog = new HandoffWindow(session, _provider) { Owner = this };
+            Clipboard.SetDataObject(PortraitClipboard.OriginalWithPrompt(session), true);
+            RejectPending();
+            _preparedSession = session;
+            UpdatePreviewAvailability();
+            Activity.Text = $"Original image and editing prompt copied. Paste into {_provider}. If the browser inserts only the image, use Copy prompt only under More options. Copy the finished image and Ctrl+V here to review it.";
+        }
+        catch (Exception ex) { Activity.Text = "Could not prepare the edit: " + ex.Message; }
+    }
+    private void OpenProvider_Click(object sender, RoutedEventArgs e)
+    {
+        try { HandoffWindow.OpenProvider(_provider); }
+        catch (Exception ex) { Activity.Text = "Could not open your browser: " + ex.Message; }
+    }
+    private void CopyPromptOnly_Click(object sender, RoutedEventArgs e)
+    {
+        try { Clipboard.SetText((_preparedSession ??= PrepareSession(PromptBox.Text)).Prompt); UpdatePreviewAvailability(); Activity.Text = "Prompt copied. Paste it beside the attached original portrait in your browser chat."; }
+        catch (Exception ex) { Activity.Text = ex.Message; }
+    }
+    private void AdvancedHandoff_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var session = _preparedSession ?? PrepareSession(PromptBox.Text);
+            _preparedSession = session;
+            var dialog = new HandoffWindow(session, _provider, CleanEdgesBox.IsChecked == true) { Owner = this };
             if (dialog.ShowDialog() == true)
             {
                 _provider = dialog.Provider;
+                CleanEdgesBox.IsChecked = dialog.CleanEdges;
                 ShowPending(session);
-                try { SaveProvider(); }
-                catch (IOException) { Activity.Text += " The provider preference could not be saved."; }
+                SaveProvider();
             }
+            UpdatePreviewAvailability();
         }
-        catch (Exception ex) { Activity.Text = "Could not prepare the edit: " + ex.Message; }
+        catch (Exception ex) { Activity.Text = ex.Message; }
+    }
+    private async void Paste_Click(object sender, RoutedEventArgs e) => await PasteImageAsync();
+    private async Task PasteImageAsync()
+    {
+        try
+        {
+            var data = Clipboard.GetDataObject();
+            if (data is null) { Activity.Text = "Copy the finished image in the browser first."; return; }
+            await ImportTransferAsync(data);
+        }
+        catch (Exception ex) { Activity.Text = "Could not paste the image: " + ex.Message; }
+    }
+    private async Task ImportTransferAsync(IDataObject data)
+    {
+        if (_isImporting || _isLoading || _isApplying) return;
+        var session = _preparedSession;
+        if (session is null) { Activity.Text = "Use Copy portrait + prompt first so the edited result is tied to this original."; return; }
+        _isImporting = true;
+        _importCancellation = new CancellationTokenSource();
+        SourcesButton.IsEnabled = false;
+        ProviderButton.IsEnabled = false;
+        AcceptButton.IsEnabled = false;
+        RejectButton.IsEnabled = false;
+        UpdatePreviewAvailability();
+        LoadProgress.IsIndeterminate = true;
+        LoadPercent.Text = "…";
+        LoadStatus.Text = "Importing edited portrait…";
+        var imported = false;
+        try
+        {
+            var bytes = await PortraitClipboard.ReadImageAsync(data, _importCancellation.Token);
+            if (!ReferenceEquals(_preparedSession, session)) throw new InvalidOperationException("The player or changes have changed. Copy the current portrait and prompt again.");
+            session.ImportBytes(bytes, CleanEdgesBox.IsChecked == true);
+            ShowPending(session);
+            imported = true;
+        }
+        catch (Exception ex) { Activity.Text = "Could not import this image: " + ex.Message; }
+        finally
+        {
+            _isImporting = false;
+            _importCancellation.Dispose();
+            _importCancellation = null;
+            SourcesButton.IsEnabled = true;
+            ProviderButton.IsEnabled = true;
+            LoadProgress.IsIndeterminate = false;
+            LoadProgress.Value = imported ? 100 : 0;
+            LoadPercent.Text = imported ? "100%" : "0%";
+            LoadStatus.Text = imported ? "Edited portrait ready for review" : "Image import did not complete";
+            UpdatePreviewAvailability();
+            AcceptButton.IsEnabled = _pendingSession is not null;
+            RejectButton.IsEnabled = _pendingSession is not null;
+        }
+    }
+    private async void ImportFile_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFileDialog { Title = "Import the edited portrait", Filter = "Portrait images|*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff", CheckFileExists = true };
+        if (picker.ShowDialog(this) != true) return;
+        try
+        {
+            _preparedSession ??= PrepareSession(PromptBox.Text);
+            var data = new DataObject(DataFormats.FileDrop, new[] { picker.FileName });
+            await ImportTransferAsync(data);
+        }
+        catch (Exception ex) { Activity.Text = ex.Message; }
+    }
+    private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        try
+        {
+            if (e.Key != Key.V || !Keyboard.Modifiers.HasFlag(ModifierKeys.Control) || _preparedSession is null) return;
+            // Keep ordinary text paste working in search and custom prompt fields.
+            if (Keyboard.FocusedElement is TextBox && !Clipboard.ContainsImage() && !Clipboard.ContainsFileDropList() && !Clipboard.ContainsData("PNG")) return;
+            e.Handled = true;
+            await PasteImageAsync();
+        }
+        catch (Exception ex) { Activity.Text = "The clipboard is unavailable: " + ex.Message; }
+    }
+    private void Portrait_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = _preparedSession is not null && !_isImporting && !_isApplying && !e.Data.GetDataPresent("FFM.OriginalPortrait") ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+    private async void Portrait_Drop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        await ImportTransferAsync(e.Data);
+    }
+    private void Original_MouseDown(object sender, MouseButtonEventArgs e) => _dragStart = e.GetPosition(OriginalImage);
+    private void Original_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _currentPortrait is null || _isApplying || _isImporting) return;
+        var position = e.GetPosition(OriginalImage);
+        if (Math.Abs(position.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(position.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        try
+        {
+            var session = _preparedSession ??= PrepareSession(PromptBox.Text);
+            var data = PortraitClipboard.OriginalWithPrompt(session);
+            data.SetData(DataFormats.FileDrop, new[] { session.OriginalCopy });
+            UpdatePreviewAvailability();
+            DragDrop.DoDragDrop(OriginalImage, data, DragDropEffects.Copy);
+        }
+        catch (Exception ex) { Activity.Text = ex.Message; }
+    }
+    private void CleanEdges_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_updatingEdges || _pendingSession is null || _isApplying || _isImporting) return;
+        try { _pendingSession.Reprocess(CleanEdgesBox.IsChecked == true); ShowPending(_pendingSession); }
+        catch (Exception ex) { RejectPending(false); Activity.Text = "Could not update edge cleanup: " + ex.Message; }
     }
     private void SaveProvider()
     {
         File.WriteAllText(Path.Combine(_dataRoot, "browser-provider.txt"), _provider);
         ProviderButton.Content = _provider + " · browser";
-        PreviewButton.Content = $"Edit in {_provider}…";
+        PreviewButton.Content = "Copy portrait + prompt";
+        OpenProviderButton.Content = "Open " + _provider;
     }
     private void Connect_Click(object sender, RoutedEventArgs e)
     {
@@ -328,7 +479,7 @@ public partial class MainWindow : Window
     private async void Accept_Click(object sender, RoutedEventArgs e)
     {
         var session = _pendingSession;
-        if (_isApplying || session?.PreviewPath is null || PlayerList.SelectedItem is not PlayerItem player || player.Id != session.PlayerId) return;
+        if (_isApplying || _isImporting || session?.PreviewPath is null || PlayerList.SelectedItem is not PlayerItem player || player.Id != session.PlayerId) return;
         _isApplying = true;
         _isLoading = true;
         SourcesButton.IsEnabled = false; ProviderButton.IsEnabled = false; PlayerList.IsEnabled = false; SearchBox.IsEnabled = false; HistoryButton.IsEnabled = false;
@@ -365,7 +516,7 @@ public partial class MainWindow : Window
             SetPresetControlsEnabled(_currentPortrait is not null);
         }
     }
-    private void Reject_Click(object sender, RoutedEventArgs e) => RejectPending();
+    private void Reject_Click(object sender, RoutedEventArgs e) => RejectPending(false);
     private void History_Click(object sender, RoutedEventArgs e)
     {
         if (_currentPortrait is null) { MessageBox.Show(this, "Select a mapped player portrait first.", "Version history"); return; }
@@ -374,7 +525,7 @@ public partial class MainWindow : Window
         try
         {
             var session = PrepareSession("Restore the selected previous portrait.");
-            session.Import(dialog.SelectedPath);
+            session.Import(dialog.SelectedPath, cleanEdges: false);
             ShowPending(session);
             Activity.Text = "Restoration preview ready. Accept will back up the current portrait before restoring this version.";
         }

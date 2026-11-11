@@ -31,9 +31,11 @@ internal static class Program
         Check(File.ReadAllBytes(pack.config).SequenceEqual(config), "exclusive replacement leaves config unchanged");
         var once = File.ReadAllBytes(pack.image);
         var second = Prepare(pack.root, candidate);
+        Check(second.EdgeReferenceCopy is not null, "earliest matching backup is snapshotted as the edge-color reference");
         var result2 = PortraitCommitService.Apply(second, Store);
         Check(Path.GetFileName(result2.BackupPath) == "original_prev2.png" && File.ReadAllBytes(result2.BackupPath).SequenceEqual(once), "repeated acceptance increments version and keeps exact previous bytes");
         var restoration = Prepare(pack.root, result.BackupPath);
+        restoration.Import(result.BackupPath, cleanEdges: false);
         PortraitCommitService.Apply(restoration, Store);
         Check(Pixels(PortraitEditSession.LoadBitmap(pack.image)).SequenceEqual(Pixels(PortraitEditSession.LoadBitmap(result.BackupPath))) && PortraitCommitService.Versions(pack.image).Count == 3, "restoration returns original pixels and creates another backup");
         var stale = Prepare(pack.root, candidate);
@@ -65,6 +67,14 @@ internal static class Program
         var next = PortraitCommitService.Apply(Prepare(shared.root, candidate), Store);
         Check(next.ImagePath == isolated.ImagePath && Path.GetFileName(next.BackupPath) == Id + "_prev2.png" && File.ReadAllBytes(next.BackupPath).SequenceEqual(beforeNext), "later edits reuse player-specific portrait and increment its backup version");
 
+        var sibling = Pack("sibling-reference", false);
+        var otherPack = Path.Combine(Path.GetDirectoryName(sibling.root)!, "another facepack");
+        Directory.CreateDirectory(otherPack);
+        File.WriteAllText(Path.Combine(otherPack, "config.xml"), "<record><record from=\"../facepack/original\" to=\"graphics/pictures/person/2000026194/portrait\"/></record>");
+        var siblingBefore = File.ReadAllBytes(sibling.image);
+        var siblingApplied = PortraitCommitService.Apply(Prepare(sibling.root, candidate), Store);
+        Check(siblingApplied.IsolatedSharedImage && File.ReadAllBytes(sibling.image).SequenceEqual(siblingBefore), "references from sibling facepacks under graphics also protect shared real-player portraits");
+
         var locked = Pack("locked", true);
         var lockedSession = Prepare(locked.root, candidate);
         var lockedImage = File.ReadAllBytes(locked.image);
@@ -91,6 +101,7 @@ internal static class Program
         Image(recoveryPack.image, 4, 4, 123);
         var external = File.ReadAllBytes(recoveryPack.image);
         Check(PortraitCommitService.Recover(Store).Count == 1 && File.ReadAllBytes(recoveryPack.image).SequenceEqual(external), "recovery detects external edits and retains them with backups");
+        ImageTransferChecks.Run(session, candidate);
         Console.WriteLine("Fixtures only: " + Sandbox);
     }
     private static (string root, string image, string config) Pack(string name, bool shared)

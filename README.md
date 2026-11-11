@@ -10,6 +10,14 @@ FFM does not require Python or fmsave at runtime. The upstream source is used fo
 
 ## Development status
 
-The Windows UI and native read-only save reader are implemented. The scanner extracts game-visible player IDs, first/last names, birth dates and ages; the UI searches newgens by name or ID. Validation against an FM27 backup save matches the six supplied player examples and the FMRTE count of 35,292 newgens. Some metadata remains unresolved; see [reader validation](docs/reader-validation.md). Club and readable nationality parsing, AI editing and portrait replacement are not ready yet.
+The Windows UI and native read-only save reader are implemented. The scanner extracts game-visible player IDs, first/last names, birth dates and ages; the UI searches newgens by name or ID. Validation against an FM27 backup save matches the six supplied player examples and the FMRTE count of 35,292 newgens. Some metadata remains unresolved; see [reader validation](docs/reader-validation.md). Club and readable nationality parsing remain outstanding.
 
 Select `graphics` or a facepack folder beneath it. FFM discovers `config.xml` files recursively without assuming folder names or order, reads standard FM `from`/`to` portrait mappings, and resolves image paths relative to each config's directory. Different images mapped to the same player are reported as a conflict. Save loading and facepack indexing run in the background with progress and cancellation shown along the bottom.
+
+## Editing with ChatGPT or Grok
+
+The MVP uses your existing browser subscription. Choose a mapped newgen and changes, click **Copy portrait + prompt**, then paste into ChatGPT or Grok. Copy the finished image in the browser and use **Paste edited image**, Ctrl+V or drag/drop on FFM's main screen for side-by-side review. The clipboard contains image and prompt formats together; browser paste support varies, so **More options → Copy prompt only** and file import remain available. No API key is needed; browser sign-in stays with the provider. See [the browser workflow](docs/browser-handoff.md).
+
+**Reduce edge halos** is enabled by default. Import preserves the original cutout alpha and prevents transparent generated pixels from exposing black colors. Cleanup restores only the outer two pixels and softens the next pixel, using a matching earliest backup when available. Toggle it to compare the preview before accepting; interior colors are not globally filtered.
+
+Accept applies the reviewed preview after verifying the source and mapping have not changed. An exact previous portrait is kept beside the active file as `<stem>_prev1.<extension>`, then `_prev2`, and so on. Shared images are isolated to a player-specific PNG and only that player's mappings are updated. Version history prepares a restoration for review, and accepting it creates another backup. Rejecting the preview leaves the facepack unchanged.
