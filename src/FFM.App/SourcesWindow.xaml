@@ -1,0 +1,61 @@
+<Window x:Class="FFM.App.SourcesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FFM · Save &amp; facepack" Width="800" SizeToContent="Height"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        FontFamily="Segoe UI" FontSize="13" Foreground="#1B2D32" Background="White"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <Window.Resources>
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="Padding" Value="11,8"/>
+            <Setter Property="BorderBrush" Value="#D6E0E1"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Hidden"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Chrome" Background="White" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6">
+                            <ScrollViewer x:Name="PART_ContentHost"/>
+                        </Border>
+                        <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#147C73"/></Trigger></ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="28,25,28,22">
+            <TextBlock Text="Save &amp; facepack" FontSize="23" FontWeight="SemiBold"/>
+            <TextBlock Text="Choose the sources for your player portraits." Foreground="#687A7E" Margin="0,7,0,0"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Margin="28,0,28,26">
+            <TextBlock Text="Facepack location" FontWeight="SemiBold"/>
+            <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="120"/></Grid.ColumnDefinitions>
+                <TextBox x:Name="GraphicsPath" AutomationProperties.Name="Facepack location" ToolTip="Select graphics or a facepack folder within it"/>
+                <Button Grid.Column="2" Content="Browse…" Click="BrowseGraphics_Click"/>
+            </Grid>
+            <TextBlock Text="Choose graphics or a folder inside it. All subfolders are searched for config.xml." FontSize="12" Foreground="#687A7E" Margin="0,7,0,24" TextWrapping="Wrap"/>
+            <DockPanel LastChildFill="False">
+                <TextBlock Text="Football Manager save" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <Border Background="#EAF4F1" CornerRadius="4" Padding="7,3" Margin="10,0,0,0"><TextBlock Text="READ-ONLY" Foreground="#147C73" FontSize="10" FontWeight="SemiBold"/></Border>
+            </DockPanel>
+            <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="120"/></Grid.ColumnDefinitions>
+                <TextBox x:Name="SaveFilePath" AutomationProperties.Name="Football Manager save" ToolTip="Football Manager .fm save file"/>
+                <Button Grid.Column="2" Content="Choose save…" Click="BrowseSave_Click"/>
+            </Grid>
+            <TextBlock Text="Player names and ages are loaded from this save." FontSize="12" Foreground="#687A7E" Margin="0,7,0,0"/>
+            <Border x:Name="ErrorPanel" Visibility="Collapsed" Background="#FFF3F0" CornerRadius="6" Padding="12" Margin="0,18,0,0">
+                <TextBlock x:Name="ErrorText" Foreground="#A33B2C" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive"/>
+            </Border>
+        </StackPanel>
+        <Border Grid.Row="2" Background="#F7F9F9" BorderBrush="#E0E8E8" BorderThickness="0,1,0,0" Padding="28,18">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" MinWidth="90" Margin="0,0,10,0" IsCancel="True"/>
+                <Button x:Name="LoadButton" Content="Load sources" MinWidth="132" Background="#147C73" BorderBrush="#147C73" Foreground="White" IsDefault="True" Click="Load_Click"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
+

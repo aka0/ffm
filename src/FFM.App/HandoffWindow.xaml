@@ -1,0 +1,20 @@
+<Window x:Class="FFM.App.HandoffWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FFM · Edit in your browser" Width="780" SizeToContent="Height" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" FontFamily="Segoe UI" FontSize="13" Background="White" Foreground="#1B2D32" ShowInTaskbar="False">
+    <Grid Margin="28"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel><TextBlock Text="Edit with your subscription" FontSize="23" FontWeight="SemiBold"/><TextBlock Text="Use your existing browser session, then bring the edited portrait back to FFM." TextWrapping="Wrap" Foreground="#687A7E" Margin="0,8,0,20"/></StackPanel>
+        <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Background="#F1F5F4" CornerRadius="8" Padding="12"><StackPanel><Image x:Name="PortraitImage" Height="170" Stretch="Uniform"/><TextBlock Text="Original portrait copy" Foreground="#687A7E" FontSize="11" HorizontalAlignment="Center" Margin="0,10,0,0"/><Button Content="Show portrait file" Margin="0,12,0,0" Click="ShowFile_Click"/></StackPanel></Border>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="1  Choose where to edit" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <ComboBox x:Name="ProviderBox" Height="38" VerticalContentAlignment="Center"><ComboBoxItem Content="ChatGPT"/><ComboBoxItem Content="Grok"/></ComboBox>
+                <TextBlock Text="2  Attach the original and paste the prompt" FontWeight="SemiBold" Margin="0,20,0,8"/>
+                <TextBlock Text="Sign in on the provider's website. Attach portrait.png from the folder below, paste the editing prompt, then download the resulting image. Ask for the same face, pose, clothes and crop." Foreground="#687A7E" TextWrapping="Wrap"/>
+                <Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Button Content="Copy editing prompt" Click="CopyPrompt_Click"/><Button Grid.Column="2" Content="Open website" Click="OpenWebsite_Click"/></Grid>
+                <TextBlock Text="3  Import the downloaded result" FontWeight="SemiBold" Margin="0,20,0,8"/>
+                <TextBlock Text="FFM will show it beside the original. Check that only your requested features changed before accepting." Foreground="#687A7E" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Grid>
+        <StackPanel Grid.Row="2" Margin="0,18,0,18"><TextBox x:Name="FolderPath" IsReadOnly="True" Padding="9" Background="#F7F9F9" BorderBrush="#E0E8E8" FontSize="11"/><TextBlock x:Name="Status" Text="Preparing or importing a preview does not change your facepack." TextWrapping="Wrap" Foreground="#687A7E" Margin="0,8,0,0"/></StackPanel>
+        <Grid Grid.Row="3"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="10"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Button Grid.Column="1" Content="Cancel" MinWidth="90" IsCancel="True"/><Button x:Name="ImportButton" Grid.Column="3" Content="Import edited image…" MinWidth="170" Click="Import_Click"/></Grid>
+    </Grid>
+</Window>
