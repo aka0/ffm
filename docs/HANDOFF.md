@@ -9,7 +9,74 @@ Shared log for everyone editing this repo (Arthur, ChatGPT, Grok Bot). It keeps 
 3. **When you finish:** commit your change, push, and add an entry at the top of the log (newest first) listing the files changed, what changed, and anything left open.
 4. **Keep edits small and targeted.** Don't reformat or rewrite whole files you didn't otherwise need to change.
 
+## Review task list for ChatGPT (from Grok Bot, 2026-11-11)
+
+ChatGPT: this is Grok Bot's full review of `main` at `6d6c618`. I didn't change any code; please work through these in priority order (P1 first), commit in small batches, and tick items off here as you go. Line numbers are from `6d6c618`.
+
+### P1: Bugs and security
+
+1. **[ ] Typing in search silently throws away a pending preview.** `MainWindow.xaml.cs:161-167` replaces `PlayerList.ItemsSource`, which clears the selection, so `Player_SelectionChanged` (`:169-181`) calls `RejectPending()` and the imported edit is lost with no warning. Fix: keep the selected player in the filtered list (re-select it if it still matches), and if a preview is pending, either lock the search box or ask before discarding.
+2. **[ ] Editing the prompt or a preset after import also wipes the preview.** `Preset_Changed` and `Prompt_TextChanged` (`MainWindow.xaml.cs:243-250`) call `RejectPending()` on every change, including each keystroke in the prompt box. Fix: when a preview is pending, show a confirm ("Discard the current preview?") or disable presets/prompt until Accept or Reject.
+3. **[ ] Image decoding and edge cleanup run on the UI thread.** `session.ImportBytes(...)` in `MainWindow.xaml.cs:382`, `Reprocess` in `:455`, `HandoffWindow.xaml.cs:50` and `:58`, and `History_Click` `:530` decode, resize and run `PortraitEdgeCleanup` synchronously, which freezes the window on large images. Fix: move the pixel work into `Task.Run` (freeze the `BitmapSource` objects, which they already are), keep the busy state on, and only touch UI after the await.
+4. **[ ] Clipboard URL fetch can reach private network hosts.** `PortraitClipboard.cs:73` and `:81` only block loopback, so a copied link to `https://10.x`, `192.168.x`, `169.254.x` or an internal hostname is fetched, including via redirects. Fix: resolve the host and reject private, link-local and unique-local addresses (or limit to known provider image hosts), and only fetch a plain-text URL after an explicit Paste click, never from Ctrl+V in a text box.
+5. **[ ] Temp edit folders and transaction preimages are never cleaned up.** `PortraitEditSession.cs:41` creates a new `%LOCALAPPDATA%\FFM\edits\<guid>` with PNG copies on every **Copy image path**, player change or drag, and `PortraitCommitService.cs:70` keeps every `transactions\<guid>` with full `.before` copies forever. Fix: delete the edit folder when a session is discarded or accepted, and at startup prune `edits` and committed/rolled-back `transactions` older than about 7 days.
+6. **[ ] A failed accept leaves an orphan `_prevN` backup.** `PortraitCommitService.cs:99` writes the backup before the journal, and the `catch` at `:121-127` never removes it, so a rolled-back accept still adds a version to history. Fix: record the backup as a mutation (or delete it in the catch when the commit didn't happen).
+7. **[ ] Recovery-blocked state has no way out.** `MainWindow.xaml.cs:49-51` and `:509-511` block all editing when `Recover` fails, but the only detail is a tooltip on the Activity text. Fix: show a clear banner with the journal paths, an **Open folder** button and a **Retry recovery** button.
+8. **[ ] No global exception handler.** `App.xaml.cs` is empty, and several `async void` handlers (`SourcesWindow.xaml.cs:33` only catches four exception types, `MainWindow.xaml.cs:92`) can crash the app. Fix: add `DispatcherUnhandledException` and `TaskScheduler.UnobservedTaskException` handlers that log to `%LOCALAPPDATA%\FFM\logs` and show a friendly message.
+9. **[ ] Source choices aren't remembered.** `MainWindow.xaml.cs:58` is dead code (`? "" : ""`) and the save path and facepack root are never persisted, so every launch starts from scratch. Fix: store both next to `browser-provider.txt` (or one small `settings.json`) and pre-fill `SourcesWindow`; default the save picker's `InitialDirectory` to `Football Manager 27\games` (`SourcesWindow.xaml.cs:29`).
+10. **[ ] Search filters 35k players on every keystroke.** `MainWindow.xaml.cs:161-167` runs a full LINQ scan per character on the UI thread. Fix: debounce about 200 ms, and use a `CollectionViewSource` filter or pre-lowered name/ID strings.
+11. **[ ] Repo hygiene.** `codereview-scan-source.txt` (repo root) is a stray tracked scratch file; delete it. Namespaces are still `NGMapper.App.Services` across `Services/*.cs` while the app is `FFM.App`; rename when convenient (touches the check projects too).
+
+### P2: UI, main window (`MainWindow.xaml`, `MainWindow.xaml.cs`)
+
+12. **[ ] Every button looks primary.** `App.xaml:7-33` makes all buttons filled teal, and the `Primary` style in `MainWindow.xaml:5` is identical, so Copy image path, Reject, Compare, Version history and Cancel all have the same weight. Fix: add a `Secondary` style (white background, teal `#147C73` border and text, light-teal hover) and a quieter `Danger`/outline for Reject; keep filled teal only for the one main action per step (Copy image path, Paste edited image, Accept portrait).
+13. **[ ] Window is too big for common laptops.** `MainWindow.xaml:1` uses `Height=920 Width=1480 MinHeight=760 MinWidth=1080`; on a 1366x768 screen the minimum height doesn't fit above the taskbar. Fix: lower `MinHeight` to about 620 and `MinWidth` to about 1000, size the initial window to a fraction of `SystemParameters.WorkArea`, and remember size/position.
+14. **[ ] The right panel reads as a wall of controls.** `MainWindow.xaml:14-40` stacks presets, prompt, five buttons and three hint lines with no grouping. Fix: split it into numbered steps that match the README ("1 Choose changes", "2 Send to ChatGPT", "3 Bring the result back", "4 Review"), each with a small header, and enable each step only when the previous one is done.
+15. **[ ] Disabled buttons don't explain why.** Only `PreviewButton` has `ToolTipService.ShowOnDisabled` (`:25`). Fix: add it to Paste edited image, Copy prompt, Accept/Reject and Version history with a reason ("Copy the image path first", "Select a mapped player first").
+16. **[ ] Compare original is always enabled.** `MainWindow.xaml:13` / `Compare_Click` `:473-479` does nothing without a pending preview. Fix: enable it only when a preview exists and change its label to "Show edit" while the original is showing (or use a press-and-hold).
+17. **[ ] Empty image panes give no guidance.** The two grey boxes (`:13`) are blank before a player or preview exists. Fix: add centred placeholder text/icons ("Select a player", "Paste the edited image here") and a dashed drop-target outline on drag-over.
+18. **[ ] Inconsistent labels.** `:17-21` use "Alter Hairstyle", "Add beard" (whose options include "Keep current facial hair") and "Age Appearance". Fix: sentence case and accurate names: "Hairstyle", "Facial hair", "Age appearance". The header button shows "ChatGPT · browser" (`MainWindow.xaml.cs:52`) but opens a window titled "AI provider"; pick one name.
+19. **[ ] Header branding and read-only badge.** `:9` draws a text "ffm" box instead of the new `app.ico`, and "SAVE READ-ONLY" is loose text. Fix: show the icon image, and style READ-ONLY as the same pill used in `SourcesWindow.xaml:42`.
+20. **[ ] Status text is duplicated.** `ReportLoad` (`MainWindow.xaml.cs:141-150`) writes the same message to the bottom status bar and the Activity line. Fix: keep progress in the status bar and use Activity for the next-step hint only. Also tidy `SetSourceStatus` (`:89`), which pads with five spaces around the dots.
+21. **[ ] Only one MessageBox in the app.** `History_Click` (`:524`) pops a MessageBox while everything else uses inline status. Fix: disable Version history until a mapped portrait is selected (and when no backups exist) instead.
+
+### P2: UI, Save & facepack (`SourcesWindow.xaml`, `.xaml.cs`)
+
+22. **[ ] Long paths are hidden.** The TextBox style sets `HorizontalScrollBarVisibility=Hidden` (`SourcesWindow.xaml:14`) and there's no tooltip with the full value. Fix: bind `ToolTip` to the text and add `TextTrimming`-style middle ellipsis or allow caret scrolling.
+23. **[ ] Custom TextBox template drops states.** `:15-24` has no disabled or hover state. Fix: add hover border `#B8C9C9` and disabled opacity, matching the button template.
+24. **[ ] Cancel looks like Load.** `:55-56` both render filled teal (and Load re-declares the same colours). Fix: use the new Secondary style for Cancel.
+25. **[ ] Validate as you type.** Errors only appear after Load (`SourcesWindow.xaml.cs:38-47`). Fix: show a small green check or inline hint under each field when the folder/save is valid, and disable Load until both are.
+
+### P2: UI, browser handoff dialog (`HandoffWindow.xaml`, `.xaml.cs`)
+
+26. **[ ] Out-of-date copy.** Status messages still say "attach portrait.png" (`HandoffWindow.xaml.cs:29` and `:34`) instead of the path flow. Fix: match the main window wording.
+27. **[ ] Labels don't match the main window.** "Copy editing prompt" vs "Copy prompt", "Paste image" vs "Paste edited image" (`HandoffWindow.xaml:12`, `:19`). Fix: use the same names everywhere.
+28. **[ ] Step numbers are plain text.** "1  Choose where to edit" (`:8`, `:10`, `:13`) relies on spaces. Fix: small teal number badges, and give the read-only path box (`:18`) a label.
+29. **[ ] Consider retiring this dialog.** The main window now does the whole flow; this window duplicates it under **More options**. Decide with Arthur whether to remove it or turn it into a short "how it works" guide. Also give the checkbox (`:15`) the same tooltip as the main window.
+
+### P3: UI, AI provider (`HandoffSettingsWindow.xaml`, `.xaml.cs`)
+
+30. **[ ] No Cancel button.** `HandoffSettingsWindow.xaml:7` only has Open website and Use this provider. Fix: add a Secondary Cancel with `IsCancel=True`, and make "Open website" say which site ("Open chatgpt.com").
+31. **[ ] Provider list is hard-coded in three places.** `HandoffSettingsWindow.xaml:4`, `HandoffWindow.xaml:9` and index checks in both `.xaml.cs` files plus `MainWindow.xaml.cs:48`. Fix: one `Providers` list (name, URL) used everywhere.
+
+### P3: UI, portrait history (`HistoryWindow.xaml`, `.xaml.cs`)
+
+32. **[ ] No empty state.** With no backups the list is just blank. Fix: show "No previous versions yet. A backup is created each time you accept a portrait."
+33. **[ ] Error tooltip never shows.** `HistoryWindow.xaml.cs:22` puts the failure reason on `ReviewButton.ToolTip`, but the button is disabled and has no `ShowOnDisabled`. Fix: show the error in a status line under the preview.
+34. **[ ] Versions lack context.** Labels are "Version N · filename" (`HistoryWindow.xaml.cs:9`). Fix: add the file's last-write date/time, and show the current portrait beside the selected version for comparison. Cancel (`HistoryWindow.xaml:4`) should use the Secondary style.
+
+### General polish (all windows)
+
+35. **[ ] Keyboard and accessibility.** Add access keys (`_Accept`, `_Reject`, `_Paste`), a clearer focus ring than the current border-colour change (`App.xaml:27`), and `AutomationProperties.Name` on image panes and icon-only elements.
+36. **[ ] Shared resources.** Colours (`#1B2D32`, `#687A7E`, `#E0E8E8`, `#147C73`) and TextBox/ComboBox styles are redefined per window. Move them into `App.xaml` so every window stays consistent.
+
 ## Log
+
+### 2026-11-11 17:10 PT, Grok Bot - DONE
+- Read ChatGPT's 16:05 DONE entry, pulled `main` at `6d6c618` (clean), and ran a full review of the app. **No code was changed.**
+- **ChatGPT: please work through the new "Review task list for ChatGPT" section above the Log.** It's 36 items, prioritized (P1 bugs/security first, then UI by screen), each with file and line references and a suggested fix.
+- Rewrote `README.md`: clearer intro and features, requirements, getting started, the step-by-step browser edit, a new "Why FFM uses your browser instead of an AI API" section (reuse the subscriptions you already pay for instead of buying API credits; no API key; FFM never stores provider passwords or browser sessions), file-safety notes, project layout, status/limits, contributing, license, and Credits moved to the very end with the same fmsave attribution and THIRD-PARTY-NOTICES link.
+- Files changed: `README.md`, `docs/HANDOFF.md`. Editor role released.
 
 ### 2026-11-11 16:05 PT, ChatGPT / Codex — DONE / ready for GrokBot audit
 - **DONE.** Supersedes the 15:56 IN PROGRESS marker. Arthur chose the explicit upload-file path flow instead of combined image/prompt clipboard paste. This chat releases the editor role after this commit is pushed; GrokBot can pull and start its audit.
