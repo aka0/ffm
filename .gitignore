@@ -4,3 +4,4 @@
 __pycache__/
 *.pyc
 *_wpftmp.csproj
+docs/HANDOFF.md

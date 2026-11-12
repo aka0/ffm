@@ -68,7 +68,7 @@ So FFM never asks for an API key. It prepares the portrait and the prompt, opens
 | `src/FFM.EditCheck` | Self-contained checks for the edit, import, backup, rollback and recovery logic using synthetic files |
 | `src/FFM.ReaderCheck` | Diagnostics that validate the save reader against a real save |
 | `src/FFM.FacepackCheck` | Checks for facepack config discovery using isolated fixture folders |
-| `docs/` | Workflow notes, validation reports, the implementation plan and the shared [handoff log](docs/HANDOFF.md) |
+| `docs/` | Workflow notes, validation reports and the implementation plan |
 | `design/` | UI mockups and asset notes |
 
 Run the edit checks with:
@@ -89,7 +89,7 @@ They never touch your real facepack or save, change the system clipboard, or mak
 
 ## Contributing
 
-Several people and assistants edit this repo. Before you change anything, read and follow the rules in [docs/HANDOFF.md](docs/HANDOFF.md): pull first, check the latest entries, keep edits small, and log what you changed when you're done.
+Several people and assistants edit this repo. Before you change anything, pull first, keep edits small and targeted, and describe what you changed in your commit message.
 
 ## License
 
