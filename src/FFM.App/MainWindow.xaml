@@ -22,16 +22,18 @@
      <ComboBox x:Name="AgeBox" Margin="0,5,0,12" SelectionChanged="Preset_Changed" IsEnabled="False"><ComboBoxItem Content="Player age unavailable" IsSelected="True"/></ComboBox>
      <TextBlock Text="Preserve the same face, pose, clothes, lighting and background. Selected features only." TextWrapping="Wrap" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,3,0,12"/>
      <Expander Header="View / edit prompt" IsExpanded="False"><StackPanel><TextBox x:Name="PromptBox" TextChanged="Prompt_TextChanged" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="125" MaxHeight="220" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"/><Button Content="Reset to selected changes" Margin="0,7,0,10" Click="ResetPrompt_Click"/></StackPanel></Expander>
-     <Button x:Name="PreviewButton" ToolTipService.ShowOnDisabled="True" Content="Copy portrait + prompt" Style="{StaticResource Primary}" Margin="0,12,0,8" Click="Preview_Click"/>
+     <Button x:Name="PreviewButton" ToolTipService.ShowOnDisabled="True" Content="Copy image path" Style="{StaticResource Primary}" Margin="0,12,0,8" Click="Preview_Click"/>
+     <TextBox x:Name="UploadPathBox" IsReadOnly="True" Visibility="Collapsed" FontSize="11" Padding="8,6" Margin="0,0,0,8" HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Full upload image path"/>
      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
       <Button x:Name="OpenProviderButton" Content="Open ChatGPT" FontSize="12" Click="OpenProvider_Click"/>
-      <Button x:Name="PasteButton" Grid.Column="2" Content="Paste edited image" FontSize="12" IsEnabled="False" Click="Paste_Click"/>
+      <Button x:Name="CopyPromptButton" Grid.Column="2" Content="Copy prompt" FontSize="12" Click="CopyPromptOnly_Click"/>
      </Grid>
+     <TextBlock Text="In the browser's Add file dialog, paste the image path into File name. Then copy and paste the prompt into chat." TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,8,0,8"/>
+     <Button x:Name="PasteButton" Content="Paste edited image" IsEnabled="False" Click="Paste_Click"/>
      <TextBlock Text="Paste with Ctrl+V, or drop the finished image onto the preview." TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Muted}" Margin="0,8,0,10"/>
      <CheckBox x:Name="CleanEdgesBox" Content="Reduce edge halos" IsChecked="True" Checked="CleanEdges_Changed" Unchecked="CleanEdges_Changed" ToolTip="Restores the outer two pixels from the original cutout and softens the next pixel. Toggle to compare before accepting." Margin="0,0,0,8"/>
      <Expander Header="More options" IsExpanded="False" Margin="0,0,0,10"><StackPanel>
       <Button x:Name="ImportFileButton" Content="Import image file…" Click="ImportFile_Click" Margin="0,8,0,6"/>
-      <Button Content="Copy prompt only" Click="CopyPromptOnly_Click" Margin="0,0,0,6"/>
       <Button Content="Browser handoff…" Click="AdvancedHandoff_Click"/>
      </StackPanel></Expander>
      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Button x:Name="AcceptButton" Grid.Column="0" Content="Accept portrait" IsEnabled="False" Click="Accept_Click"/><Button x:Name="RejectButton" Grid.Column="2" Content="Reject" IsEnabled="False" Click="Reject_Click"/></Grid>

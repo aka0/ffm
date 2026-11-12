@@ -2,7 +2,7 @@
     <StackPanel Margin="28"><TextBlock Text="AI browser handoff" FontSize="23" FontWeight="SemiBold"/><TextBlock Text="Use the subscription you already have." Foreground="#687A7E" Margin="0,8,0,20"/>
         <TextBlock Text="Image editor" FontWeight="SemiBold"/>
         <ComboBox x:Name="ProviderBox" Height="40" Margin="0,8,0,18" VerticalContentAlignment="Center"><ComboBoxItem Content="ChatGPT"/><ComboBoxItem Content="Grok"/></ComboBox>
-        <TextBlock Text="FFM prepares the original portrait and prompt. You attach them in the browser, download the edited image, and import it into FFM for review. Sign-in and subscription usage stay on the provider's website." Foreground="#687A7E" TextWrapping="Wrap"/>
+        <TextBlock Text="FFM copies the original image's full path for the browser's Add file dialog, and provides the editing prompt separately. Paste or import the finished image back into FFM for review. Sign-in and subscription usage stay on the provider's website." Foreground="#687A7E" TextWrapping="Wrap"/>
         <TextBlock x:Name="Status" Text="No API key is needed. FFM does not store your provider password or browser session." Foreground="#687A7E" TextWrapping="Wrap" Margin="0,12,0,22"/>
         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Button Content="Open website" Click="Open_Click"/><Button Grid.Column="2" Content="Use this provider" IsDefault="True" Click="Use_Click"/></Grid>
     </StackPanel>

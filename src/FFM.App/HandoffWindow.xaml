@@ -3,12 +3,12 @@
     <Grid Margin="28"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel><TextBlock Text="Edit with your subscription" FontSize="23" FontWeight="SemiBold"/><TextBlock Text="Use your existing browser session, then bring the edited portrait back to FFM." TextWrapping="Wrap" Foreground="#687A7E" Margin="0,8,0,20"/></StackPanel>
         <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <Border Background="#F1F5F4" CornerRadius="8" Padding="12"><StackPanel><Image x:Name="PortraitImage" Height="170" Stretch="Uniform"/><TextBlock Text="Original portrait copy" Foreground="#687A7E" FontSize="11" HorizontalAlignment="Center" Margin="0,10,0,0"/><Button Content="Show portrait file" Margin="0,12,0,0" Click="ShowFile_Click"/></StackPanel></Border>
+            <Border Background="#F1F5F4" CornerRadius="8" Padding="12"><StackPanel><Image x:Name="PortraitImage" Height="170" Stretch="Uniform"/><TextBlock Text="Original portrait copy" Foreground="#687A7E" FontSize="11" HorizontalAlignment="Center" Margin="0,10,0,0"/><Button Content="Copy image path" Margin="0,12,0,0" Click="CopyImagePath_Click"/></StackPanel></Border>
             <StackPanel Grid.Column="2">
                 <TextBlock Text="1  Choose where to edit" FontWeight="SemiBold" Margin="0,0,0,8"/>
                 <ComboBox x:Name="ProviderBox" Height="38" VerticalContentAlignment="Center"><ComboBoxItem Content="ChatGPT"/><ComboBoxItem Content="Grok"/></ComboBox>
                 <TextBlock Text="2  Attach the original and paste the prompt" FontWeight="SemiBold" Margin="0,20,0,8"/>
-                <TextBlock Text="Sign in on the provider's website. Attach portrait.png from the folder below, paste the editing prompt, then download the resulting image. Ask for the same face, pose, clothes and crop." Foreground="#687A7E" TextWrapping="Wrap"/>
+                <TextBlock Text="Copy the image path. In the browser's Add file dialog, paste it into File name and open the PNG. Then copy the editing prompt into chat. Ask for the same face, pose, clothes and crop." Foreground="#687A7E" TextWrapping="Wrap"/>
                 <Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Button Content="Copy editing prompt" Click="CopyPrompt_Click"/><Button Grid.Column="2" Content="Open website" Click="OpenWebsite_Click"/></Grid>
                 <TextBlock Text="3  Paste or drop the finished image here" FontWeight="SemiBold" Margin="0,20,0,8"/>
                 <TextBlock Text="Use Copy image in the browser, then Ctrl+V here. You can also drop an image or import a downloaded file." Foreground="#687A7E" TextWrapping="Wrap"/>

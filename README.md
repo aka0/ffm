@@ -16,7 +16,7 @@ Select `graphics` or a facepack folder beneath it. FFM discovers `config.xml` fi
 
 ## Editing with ChatGPT or Grok
 
-The MVP uses your existing browser subscription. Choose a mapped newgen and changes, click **Copy portrait + prompt**, then paste into ChatGPT or Grok. Copy the finished image in the browser and use **Paste edited image**, Ctrl+V or drag/drop on FFM's main screen for side-by-side review. The clipboard contains image and prompt formats together; browser paste support varies, so **More options → Copy prompt only** and file import remain available. No API key is needed; browser sign-in stays with the provider. See [the browser workflow](docs/browser-handoff.md).
+The MVP uses your existing browser subscription. Choose a mapped newgen and changes, then click **Copy image path**. In ChatGPT or Grok, choose **Add file** and paste that full path into the file picker's **File name** box. Use the separate **Copy prompt** button to paste the editing instructions into chat. Copy the finished image in the browser and use **Paste edited image**, Ctrl+V or drag/drop on FFM's main screen for side-by-side review. File import remains available under **More options**. No API key is needed; browser sign-in stays with the provider. See [the browser workflow](docs/browser-handoff.md).
 
 **Reduce edge halos** is enabled by default. Import preserves the original cutout alpha and prevents transparent generated pixels from exposing black colors. Cleanup restores only the outer two pixels and softens the next pixel, using a matching earliest backup when available. Toggle it to compare the preview before accepting; interior colors are not globally filtered.
 

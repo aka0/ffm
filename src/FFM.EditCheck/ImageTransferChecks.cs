@@ -2,8 +2,6 @@ using NGMapper.App.Services;
 using System.IO;
 using System.Net;
 using System.Net.Http;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Windows;
 
 internal static class ImageTransferChecks
@@ -11,13 +9,10 @@ internal static class ImageTransferChecks
     internal static void Run(PortraitEditSession session, string imageFile)
     {
         var bytes = File.ReadAllBytes(imageFile);
-        var outgoing = PortraitClipboard.OriginalWithPrompt(session);
-        Check(outgoing.GetDataPresent("PNG") && outgoing.GetDataPresent(DataFormats.Bitmap) && outgoing.GetData(DataFormats.UnicodeText) as string == session.Prompt, "combined copy provides PNG, bitmap and full prompt together");
-        var html = outgoing.GetData(DataFormats.Html) as string ?? throw new Exception("Rich clipboard data is missing.");
-        int Offset(string name) => int.Parse(Regex.Match(html, name + @":(\d+)").Groups[1].Value);
-        var htmlBytes = Encoding.UTF8.GetBytes(html);
-        var fragment = Encoding.UTF8.GetString(htmlBytes, Offset("StartFragment"), Offset("EndFragment") - Offset("StartFragment"));
-        Check(Offset("EndHTML") == htmlBytes.Length && fragment.StartsWith("<img") && fragment.Contains("data:image/png;base64,") && fragment.Contains("<p>"), "rich clipboard payload has valid UTF-8 offsets and includes image plus prompt");
+        var upload = PortraitClipboard.OriginalFilePath(session);
+        Check(Path.IsPathFullyQualified(upload) && File.Exists(upload) && upload == session.OriginalCopy && Path.GetExtension(upload) == ".png", "upload path is the exact existing prepared PNG, ready for the Add file dialog");
+        var outgoing = PortraitClipboard.OriginalFile(session);
+        Check(outgoing.GetData(DataFormats.FileDrop) is string[] files && files.Single() == upload && !outgoing.GetDataPresent(DataFormats.Html) && !outgoing.GetDataPresent(DataFormats.UnicodeText), "original drag payload is a real file without misleading combined image/text formats");
         Throws(() => Read(outgoing), "FFM original clipboard cannot be mistaken for a finished edit");
         var png = new DataObject();
         png.SetData("PNG", new MemoryStream(bytes));

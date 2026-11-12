@@ -18,7 +18,8 @@ public partial class HandoffWindow : Window
         InitializeComponent();
         _session = session;
         ProviderBox.SelectedIndex = provider == "Grok" ? 1 : 0;
-        FolderPath.Text = session.Folder;
+        FolderPath.Text = session.OriginalCopy;
+        FolderPath.ToolTip = session.OriginalCopy;
         PortraitImage.Source = PortraitEditSession.LoadBitmap(session.OriginalCopy);
         CleanEdgesBox.IsChecked = cleanEdges;
     }
@@ -33,13 +34,12 @@ public partial class HandoffWindow : Window
         try { OpenProvider(Provider); Status.Text = $"{Provider} opened. Your portrait is not uploaded automatically; attach portrait.png in the browser."; }
         catch (Exception ex) { Status.Text = "Could not open your browser: " + ex.Message; }
     }
-    private void ShowFile_Click(object sender, RoutedEventArgs e)
+    private void CopyImagePath_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            var info = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
-            info.ArgumentList.Add(_session.Folder);
-            Process.Start(info);
+            Clipboard.SetText(PortraitClipboard.OriginalFilePath(_session));
+            Status.Text = "Full image path copied. Paste it into File name in the browser's Add file dialog.";
         }
         catch (Exception ex) { Status.Text = ex.Message; }
     }

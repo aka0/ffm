@@ -234,7 +234,7 @@ public partial class MainWindow : Window
     private void SetPresetControlsEnabled(bool enabled)
     {
         HairstyleBox.IsEnabled = enabled; BeardBox.IsEnabled = enabled; AgeBox.IsEnabled = enabled && AgeBox.Items.Count > 1;
-        PreviewButton.Content = "Copy portrait + prompt";
+        PreviewButton.Content = "Copy image path";
         UpdatePreviewAvailability();
         AcceptButton.IsEnabled = false;
         RejectButton.IsEnabled = false;
@@ -251,9 +251,12 @@ public partial class MainWindow : Window
     private void UpdatePreviewAvailability()
     {
         if (PreviewButton is null) return;
-        var chosen = HairstyleBox.SelectedIndex > 0 || BeardBox.SelectedIndex > 0 || AgeBox.SelectedIndex > 0 || (_customPrompt && !string.IsNullOrWhiteSpace(PromptBox.Text));
-        PreviewButton.IsEnabled = !_isApplying && !_isLoading && !_isImporting && !_recoveryBlocked && _currentPortrait is not null && HairstyleBox.IsEnabled && chosen;
-        PreviewButton.ToolTip = _recoveryBlocked ? "An interrupted operation needs recovery first." : "Copies the original PNG, prompt text and rich content together. If the browser pastes only the image, use Copy prompt only under More options.";
+        PreviewButton.IsEnabled = !_isApplying && !_isLoading && !_isImporting && !_recoveryBlocked && _currentPortrait is not null && HairstyleBox.IsEnabled;
+        PreviewButton.ToolTip = _recoveryBlocked ? "An interrupted operation needs recovery first." : "Copies the full path to the prepared original PNG. Paste it into File name in the browser's Add file dialog.";
+        CopyPromptButton.IsEnabled = PreviewButton.IsEnabled;
+        UploadPathBox.Text = _preparedSession?.OriginalCopy ?? "";
+        UploadPathBox.ToolTip = UploadPathBox.Text;
+        UploadPathBox.Visibility = _preparedSession is null ? Visibility.Collapsed : Visibility.Visible;
         PasteButton.IsEnabled = !_isApplying && !_isLoading && !_isImporting && !_recoveryBlocked && _preparedSession is not null;
         ImportFileButton.IsEnabled = !_isApplying && !_isLoading && !_isImporting && !_recoveryBlocked && _currentPortrait is not null;
     }
@@ -309,11 +312,11 @@ public partial class MainWindow : Window
         try
         {
             var session = PrepareSession(PromptBox.Text);
-            Clipboard.SetDataObject(PortraitClipboard.OriginalWithPrompt(session), true);
+            Clipboard.SetText(PortraitClipboard.OriginalFilePath(session));
             RejectPending();
             _preparedSession = session;
             UpdatePreviewAvailability();
-            Activity.Text = $"Original image and editing prompt copied. Paste into {_provider}. If the browser inserts only the image, use Copy prompt only under More options. Copy the finished image and Ctrl+V here to review it.";
+            Activity.Text = $"Image path copied. In {_provider}, choose Add file and paste this full path into File name. Then use Copy prompt and paste it into chat.";
         }
         catch (Exception ex) { Activity.Text = "Could not prepare the edit: " + ex.Message; }
     }
@@ -360,7 +363,7 @@ public partial class MainWindow : Window
     {
         if (_isImporting || _isLoading || _isApplying) return;
         var session = _preparedSession;
-        if (session is null) { Activity.Text = "Use Copy portrait + prompt first so the edited result is tied to this original."; return; }
+        if (session is null) { Activity.Text = "Use Copy image path first so the edited result is tied to this original."; return; }
         _isImporting = true;
         _importCancellation = new CancellationTokenSource();
         SourcesButton.IsEnabled = false;
@@ -440,8 +443,7 @@ public partial class MainWindow : Window
         try
         {
             var session = _preparedSession ??= PrepareSession(PromptBox.Text);
-            var data = PortraitClipboard.OriginalWithPrompt(session);
-            data.SetData(DataFormats.FileDrop, new[] { session.OriginalCopy });
+            var data = PortraitClipboard.OriginalFile(session);
             UpdatePreviewAvailability();
             DragDrop.DoDragDrop(OriginalImage, data, DragDropEffects.Copy);
         }
@@ -457,7 +459,7 @@ public partial class MainWindow : Window
     {
         File.WriteAllText(Path.Combine(_dataRoot, "browser-provider.txt"), _provider);
         ProviderButton.Content = _provider + " · browser";
-        PreviewButton.Content = "Copy portrait + prompt";
+        PreviewButton.Content = "Copy image path";
         OpenProviderButton.Content = "Open " + _provider;
     }
     private void Connect_Click(object sender, RoutedEventArgs e)

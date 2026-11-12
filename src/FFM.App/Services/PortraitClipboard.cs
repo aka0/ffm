@@ -1,7 +1,6 @@
 using System.IO;
 using System.Net;
 using System.Net.Http;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Imaging;
@@ -13,19 +12,18 @@ public static class PortraitClipboard
     public const int MaximumBytes = 32 * 1024 * 1024;
     private static readonly HttpClient Downloads = new(new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
 
-    public static DataObject OriginalWithPrompt(PortraitEditSession session)
+    public static string OriginalFilePath(PortraitEditSession session)
     {
         var bytes = File.ReadAllBytes(session.OriginalCopy);
         if (PortraitEditSession.Hash(bytes) != session.OriginalCopyHash) throw new InvalidDataException("The exported original changed. Prepare a fresh edit.");
+        return Path.GetFullPath(session.OriginalCopy);
+    }
+
+    public static DataObject OriginalFile(PortraitEditSession session)
+    {
         var data = new DataObject();
         data.SetData("FFM.OriginalPortrait", session.OriginalCopyHash);
-        data.SetData("PNG", new MemoryStream(bytes, false));
-        data.SetData(DataFormats.Bitmap, PortraitEditSession.LoadBitmap(session.OriginalCopy));
-        data.SetData(DataFormats.UnicodeText, session.Prompt);
-        data.SetData(DataFormats.Text, session.Prompt);
-        // Rich paste consumers can take the image and text as one HTML fragment.
-        var fragment = "<img alt=\"Original player portrait\" src=\"data:image/png;base64," + Convert.ToBase64String(bytes) + "\"><p>" + WebUtility.HtmlEncode(session.Prompt).Replace("\n", "<br>") + "</p>";
-        data.SetData(DataFormats.Html, HtmlClipboard(fragment));
+        data.SetData(DataFormats.FileDrop, new[] { OriginalFilePath(session) });
         return data;
     }
 
@@ -106,14 +104,4 @@ public static class PortraitClipboard
     }
     private static InvalidDataException TooLarge() => new("Choose a portrait smaller than 32 MB.");
     private static InvalidDataException NoImage() => new("No usable image was received. In the browser, use Copy image, then Ctrl+V here; alternatively drop a downloaded PNG or use Import image file.");
-    private static string HtmlClipboard(string fragment)
-    {
-        const string format = "Version:1.0\r\nStartHTML:{0:0000000000}\r\nEndHTML:{1:0000000000}\r\nStartFragment:{2:0000000000}\r\nEndFragment:{3:0000000000}\r\n";
-        const string prefix = "<html><body><!--StartFragment-->";
-        const string suffix = "<!--EndFragment--></body></html>";
-        var headerLength = Encoding.UTF8.GetByteCount(string.Format(format, 0, 0, 0, 0));
-        var start = headerLength + Encoding.UTF8.GetByteCount(prefix);
-        var end = start + Encoding.UTF8.GetByteCount(fragment);
-        return string.Format(System.Globalization.CultureInfo.InvariantCulture, format, headerLength, end + Encoding.UTF8.GetByteCount(suffix), start, end) + prefix + fragment + suffix;
-    }
 }
