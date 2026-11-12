@@ -1,11 +1,12 @@
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Imaging;
 
-namespace NGMapper.App.Services;
+namespace FFM.App.Services;
 
 public static class PortraitClipboard
 {
@@ -27,7 +28,7 @@ public static class PortraitClipboard
         return data;
     }
 
-    public static async Task<byte[]> ReadImageAsync(IDataObject data, CancellationToken token = default, HttpClient? downloads = null)
+    public static async Task<byte[]> ReadImageAsync(IDataObject data, CancellationToken token = default, HttpClient? downloads = null, Func<string, CancellationToken, Task<IPAddress[]>>? resolveHost = null)
     {
         if (data.GetDataPresent("FFM.OriginalPortrait")) throw new InvalidDataException("This clipboard contains the original portrait. Copy the finished image from the browser, then paste it here.");
         if (data.GetDataPresent(DataFormats.FileDrop) && data.GetData(DataFormats.FileDrop) is string[] files)
@@ -70,15 +71,16 @@ public static class PortraitClipboard
             if (bytes.Length > MaximumBytes) throw TooLarge();
             return bytes;
         }
-        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || uri.IsLoopback || uri.UserInfo.Length != 0) throw NoImage();
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length != 0) throw NoImage();
         var client = downloads ?? Downloads;
         for (var redirects = 0; redirects <= 3; redirects++)
         {
+            await EnsurePublicHostAsync(uri, token, resolveHost);
             using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, token);
             if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location is Uri location)
             {
                 uri = location.IsAbsoluteUri ? location : new Uri(uri, location);
-                if (uri.Scheme != Uri.UriSchemeHttps || uri.IsLoopback || uri.UserInfo.Length != 0) throw NoImage();
+                if (uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length != 0) throw NoImage();
                 continue;
             }
             if (!response.IsSuccessStatusCode || response.Content.Headers.ContentType?.MediaType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true)
@@ -88,6 +90,32 @@ public static class PortraitClipboard
             return await ReadBounded(stream, token);
         }
         throw NoImage();
+    }
+
+    private static async Task EnsurePublicHostAsync(Uri uri, CancellationToken token, Func<string, CancellationToken, Task<IPAddress[]>>? resolver)
+    {
+        var host = uri.DnsSafeHost.TrimEnd('.');
+        if (host.Length == 0 || host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || !host.Contains('.') || host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)) throw NoImage();
+        IPAddress[] addresses;
+        if (IPAddress.TryParse(host, out var literal)) addresses = [literal];
+        else
+        {
+            try { addresses = await (resolver?.Invoke(host, token) ?? Dns.GetHostAddressesAsync(host, token)); }
+            catch (Exception ex) when (ex is SocketException or ArgumentException) { throw NoImage(); }
+        }
+        if (addresses.Length == 0 || addresses.Any(IsNonPublicAddress)) throw NoImage();
+    }
+
+    private static bool IsNonPublicAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (IPAddress.IsLoopback(address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any) || address.Equals(IPAddress.IPv6Loopback)) return true;
+        var b = address.GetAddressBytes();
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+            return b[0] == 0 || b[0] == 10 || b[0] == 127 || b[0] >= 224 || b[0] == 169 && b[1] == 254 || b[0] == 172 && b[1] is >= 16 and <= 31 || b[0] == 192 && b[1] == 168 || b[0] == 100 && b[1] is >= 64 and <= 127;
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+            return address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || (b[0] & 0xFE) == 0xFC || (b[0] == 0xFF) || b.All(x => x == 0);
+        return true;
     }
 
     private static async Task<byte[]> ReadBounded(Stream input, CancellationToken token)
@@ -103,5 +131,5 @@ public static class PortraitClipboard
         return output.ToArray();
     }
     private static InvalidDataException TooLarge() => new("Choose a portrait smaller than 32 MB.");
-    private static InvalidDataException NoImage() => new("No usable image was received. In the browser, use Copy image, then Ctrl+V here; alternatively drop a downloaded PNG or use Import image file.");
+    private static InvalidDataException NoImage() => new("No usable public image link was received. In the browser, use Copy image, then Ctrl+V here; alternatively drop a downloaded PNG or use Import image file.");
 }

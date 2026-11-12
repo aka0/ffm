@@ -5,9 +5,9 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
-namespace NGMapper.App.Services;
+namespace FFM.App.Services;
 
-public sealed class PortraitEditSession
+public sealed class PortraitEditSession : IDisposable
 {
     public required string PlayerId { get; init; }
     public required string FacepackRoot { get; init; }
@@ -30,6 +30,25 @@ public sealed class PortraitEditSession
     {
         if (_importedBytes is null) throw new InvalidOperationException("Import an edited image first.");
         ImportBytes(_importedBytes, cleanEdges);
+    }
+
+    public void DiscardPreview()
+    {
+        if (PreviewPath is not null)
+        {
+            try { if (File.Exists(PreviewPath)) File.Delete(PreviewPath); } catch (IOException) { }
+        }
+        PreviewPath = null;
+        PreviewHash = null;
+        CorrectedEdgePixels = 0;
+        _importedBytes = null;
+    }
+
+    public void Dispose()
+    {
+        try { if (Directory.Exists(Folder)) Directory.Delete(Folder, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public static PortraitEditSession Prepare(string id, string root, FacepackPortrait mapping, string prompt, string dataRoot)
@@ -62,14 +81,27 @@ public sealed class PortraitEditSession
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or FileFormatException) { }
         }
-        var fullPrompt = "Edit the attached original portrait, rather than creating a new person. Apply only the requested changes. Preserve identity, facial structure, pose, expression, clothing, framing, lighting, background and image aspect ratio. Return a PNG. Preserve real alpha transparency where present; do not flatten it onto black, white, a colored matte or a checkerboard. Keep clean natural hair and skin edges with smooth antialiasing: no outline, stroke, black halo, colored fringe, isolated bright/red edge pixels or oversharpened border. Do not add text, watermark, frame, padding or collage.\n\n" + prompt;
-        File.WriteAllText(Path.Combine(folder, "prompt.txt"), fullPrompt, new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(folder, "prompt.txt"), prompt, new UTF8Encoding(false));
         return new PortraitEditSession { PlayerId = id, FacepackRoot = Path.GetFullPath(root), OriginalPath = Path.GetFullPath(mapping.ImagePath), ConfigPath = mapping.ConfigPath,
             OriginalHash = Hash(bytes), ConfigHash = Hash(File.ReadAllBytes(mapping.ConfigPath)), Folder = folder, OriginalCopy = original, OriginalCopyHash = Hash(File.ReadAllBytes(original)),
-            EdgeReferenceCopy = edgeCopy, EdgeReferenceHash = edgeCopy is null ? null : Hash(File.ReadAllBytes(edgeCopy)), Prompt = fullPrompt };
+            EdgeReferenceCopy = edgeCopy, EdgeReferenceHash = edgeCopy is null ? null : Hash(File.ReadAllBytes(edgeCopy)), Prompt = prompt };
     }
 
     public void Import(string path, bool cleanEdges = true) => ImportBytes(ReadImageBytes(path), cleanEdges);
+
+    public void ImportRestore(string path)
+    {
+        var bytes = ReadImageBytes(path);
+        _ = Decode(bytes);
+        DiscardPreview();
+        var preview = Path.Combine(Folder, "restore-" + Guid.NewGuid().ToString("N") + Path.GetExtension(path));
+        File.WriteAllBytes(preview, bytes);
+        PreviewPath = preview;
+        PreviewHash = Hash(bytes);
+        CorrectedEdgePixels = 0;
+        EdgeCleanupEnabled = false;
+        _importedBytes = bytes;
+    }
 
     public void ImportBytes(byte[] bytes, bool cleanEdges = true)
     {
@@ -82,10 +114,16 @@ public sealed class PortraitEditSession
         var editedRatio = (double)edited.PixelWidth / edited.PixelHeight;
         if (Math.Abs(originalRatio / editedRatio - 1) > 0.02) throw new InvalidDataException("The edited image has a different aspect ratio. Ask the provider to keep the original crop and aspect ratio, then import it again.");
         var visual = new DrawingVisual();
+        RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.Fant);
         using (var drawing = visual.RenderOpen()) drawing.DrawImage(edited, new Rect(0, 0, original.PixelWidth, original.PixelHeight));
         var render = new RenderTargetBitmap(original.PixelWidth, original.PixelHeight, 96, 96, PixelFormats.Pbgra32);
         render.Render(visual);
         var before = Pixels(original);
+        var rendered = Pixels(render);
+        var originalHasTransparency = HasTransparency(before);
+        var editedHasTransparency = HasTransparency(rendered);
+        if (originalHasTransparency && !editedHasTransparency)
+            throw new InvalidDataException("This result has an opaque background, but the original portrait uses transparency. Ask the image editor for a transparent PNG, then import it again. FFM has not enabled acceptance.");
         byte[]? edgeReference = null;
         if (cleanEdges && EdgeReferenceCopy is not null)
         {
@@ -93,9 +131,10 @@ public sealed class PortraitEditSession
             if (Hash(reference) != EdgeReferenceHash) throw new InvalidDataException("The edge reference changed. Prepare a fresh edit.");
             edgeReference = Pixels(Decode(reference));
         }
-        var after = PortraitEdgeCleanup.Apply(before, Pixels(render), original.PixelWidth, original.PixelHeight, cleanEdges, out var corrected, edgeReference);
+        var after = PortraitEdgeCleanup.Apply(before, rendered, original.PixelWidth, original.PixelHeight, cleanEdges, out var corrected, edgeReference);
         var normalized = BitmapSource.Create(original.PixelWidth, original.PixelHeight, 96, 96, PixelFormats.Bgra32, null, after, original.PixelWidth * 4);
         normalized.Freeze();
+        DiscardPreview();
         var preview = Path.Combine(Folder, "preview-" + Guid.NewGuid().ToString("N") + ".png");
         SavePng(normalized, preview);
         PreviewPath = preview;
@@ -115,12 +154,16 @@ public sealed class PortraitEditSession
     private static BitmapSource Decode(byte[] bytes)
     {
         using var stream = new MemoryStream(bytes, false);
-        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
         if (decoder.Frames.Count != 1) throw new InvalidDataException("Choose a single, still portrait image.");
         var bitmap = decoder.Frames[0];
         if (bitmap.PixelWidth <= 0 || bitmap.PixelHeight <= 0 || (long)bitmap.PixelWidth * bitmap.PixelHeight > 16_000_000) throw new InvalidDataException("The portrait dimensions are too large.");
-        bitmap.Freeze();
-        return bitmap;
+        var converted = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+        var pixels = new byte[checked(bitmap.PixelWidth * bitmap.PixelHeight * 4)];
+        converted.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
+        var loaded = BitmapSource.Create(bitmap.PixelWidth, bitmap.PixelHeight, 96, 96, PixelFormats.Bgra32, null, pixels, bitmap.PixelWidth * 4);
+        loaded.Freeze();
+        return loaded;
     }
     private static byte[] Pixels(BitmapSource bitmap)
     {
@@ -128,6 +171,11 @@ public sealed class PortraitEditSession
         var pixels = new byte[checked(bitmap.PixelWidth * bitmap.PixelHeight * 4)];
         converted.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
         return pixels;
+    }
+    private static bool HasTransparency(byte[] pixels)
+    {
+        for (var i = 3; i < pixels.Length; i += 4) if (pixels[i] < 250) return true;
+        return false;
     }
     private static void SavePng(BitmapSource bitmap, string path)
     {

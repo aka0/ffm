@@ -1,4 +1,4 @@
-using NGMapper.App.Services;
+using FFM.App.Services;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -34,6 +34,8 @@ internal static class ImageTransferChecks
         });
         using var http = new HttpClient(handler);
         Check(Read(remote, http).SequenceEqual(bytes), "public HTTPS image link imports through bounded image download");
+        Throws(() => Read(new DataObject(DataFormats.UnicodeText, "https://192.168.1.20/image.png"), http), "literal private-network image URLs are rejected before HTTP");
+        Throws(() => PortraitClipboard.ReadImageAsync(remote, downloads: http, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("10.2.3.4") })).GetAwaiter().GetResult(), "DNS names resolving to private addresses are rejected");
         using var privateHttp = new HttpClient(new Handler(_ => new(HttpStatusCode.Unauthorized)));
         Throws(() => Read(remote, privateHttp), "private browser links fail with copy-image/file guidance");
         using var redirectHttp = new HttpClient(new Handler(_ => new(HttpStatusCode.Redirect) { Headers = { Location = new Uri("http://example.test/image.png") } }));
@@ -46,6 +48,16 @@ internal static class ImageTransferChecks
             return response;
         }));
         Throws(() => Read(remote, largeHttp), "oversized linked images are rejected before reading content");
+        using var unknownLengthHttp = new HttpClient(new Handler(_ => new(HttpStatusCode.OK) { Content = new UnknownLengthContent(bytes, "image/png") }));
+        Check(Read(remote, unknownLengthHttp).SequenceEqual(bytes), "public image links without Content-Length are still bounded and imported");
+        using var nonImageHttp = new HttpClient(new Handler(_ => new(HttpStatusCode.OK) { Content = new UnknownLengthContent(bytes, "text/plain") }));
+        Throws(() => Read(remote, nonImageHttp), "non-image HTTP responses are rejected");
+        using var slowHttp = new HttpClient(new Handler(_ => new(HttpStatusCode.OK) { Content = new SlowContent() }));
+        using (var slowToken = new CancellationTokenSource(TimeSpan.FromMilliseconds(100)))
+        {
+            try { PortraitClipboard.ReadImageAsync(remote, slowToken.Token, slowHttp, (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") })).GetAwaiter().GetResult(); throw new Exception("FAIL: stalled response body can be cancelled"); }
+            catch (OperationCanceledException) { Console.WriteLine("PASS: stalled response bodies observe import cancellation"); }
+        }
         Throws(() => Read(new DataObject(DataFormats.UnicodeText, "blob:https://chatgpt.com/private-image")), "browser-private blob URLs do not cause hidden authentication attempts");
         Throws(() => Read(new DataObject(DataFormats.UnicodeText, "ordinary editing prompt")), "ordinary clipboard text is not treated as an image");
         EdgeChecks();
@@ -59,17 +71,17 @@ internal static class ImageTransferChecks
         Set(edited, 2, 5, 0, 0, 0, 255);
         Set(edited, 3, 5, 0, 0, 255, 255);
         Set(edited, 6, 6, 0, 0, 255, 255); // legitimate red interior detail
-        Set(edited, 6, 5, 0, 0, 0, 0); // undefined transparent RGB must not become black
+        Set(edited, 2, 6, 240, 240, 240, 0); // transparent edge lets the provider remove a small hair section
         Set(edited, 0, 0, 0, 0, 255, 255); // colored noise outside original cutout
         var input = (byte[])edited.Clone();
         var cleaned = PortraitEdgeCleanup.Apply(original, edited, size, size, true, out var count);
-        Check(EqualPixel(cleaned, original, 2, 5) && EqualPixel(cleaned, original, 3, 5) && count >= 3, "narrow edge cleanup removes synthetic black and red boundary artifacts");
+        Check(EqualPixel(cleaned, original, 2, 5) && EqualPixel(cleaned, original, 3, 5) && count >= 2, "narrow edge cleanup removes synthetic black and red boundary artifacts");
         Check(EqualPixel(cleaned, edited, 6, 6), "legitimate red interior pixels remain untouched");
-        Check(EqualPixel(cleaned, original, 6, 5), "transparent generated pixels cannot expose black RGB after alpha restoration");
-        Check(EqualPixel(cleaned, original, 0, 0) && Enumerable.Range(0, size * size).All(i => cleaned[i * 4 + 3] == original[i * 4 + 3]), "cleanup preserves the exact original alpha and transparent background");
+        Check(cleaned[(6 * size + 2) * 4 + 3] == 0, "transparent edited pixels can remove hair from the original silhouette");
+        Check(cleaned[(0 * size + 0) * 4 + 3] == 0, "transparent background pixels stay clear even when the provider leaves matte RGB there");
         Check(edited.SequenceEqual(input), "cleanup does not mutate the imported pixel buffer");
         var off = PortraitEdgeCleanup.Apply(original, edited, size, size, false, out _);
-        Check(EqualPixel(off, edited, 2, 5) && EqualPixel(off, original, 6, 5), "cleanup can be disabled while invalid transparent-color protection stays active");
+        Check(EqualPixel(off, edited, 2, 5) && off[(6 * size + 2) * 4 + 3] == 0, "cleanup can be disabled while edited transparency still removes the old silhouette");
         var alreadyDamaged = (byte[])original.Clone();
         Set(alreadyDamaged, 2, 5, 0, 0, 0, 255);
         var historical = PortraitEdgeCleanup.Apply(alreadyDamaged, edited, size, size, true, out _, original);
@@ -77,7 +89,7 @@ internal static class ImageTransferChecks
         static void Set(byte[] data, int x, int y, byte b, byte g, byte r, byte a) { var at = (y * size + x) * 4; data[at] = b; data[at + 1] = g; data[at + 2] = r; data[at + 3] = a; }
         static bool EqualPixel(byte[] a, byte[] b, int x, int y) => a.AsSpan((y * size + x) * 4, 4).SequenceEqual(b.AsSpan((y * size + x) * 4, 4));
     }
-    private static byte[] Read(IDataObject data, HttpClient? client = null) => PortraitClipboard.ReadImageAsync(data, downloads: client).GetAwaiter().GetResult();
+    private static byte[] Read(IDataObject data, HttpClient? client = null) => PortraitClipboard.ReadImageAsync(data, downloads: client, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") })).GetAwaiter().GetResult();
     private static void Check(bool condition, string message) { if (!condition) throw new Exception("FAIL: " + message); Console.WriteLine("PASS: " + message); }
     private static void Throws(Action action, string message)
     {
@@ -88,5 +100,39 @@ internal static class ImageTransferChecks
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => Task.FromResult(response(request));
+    }
+    private sealed class UnknownLengthContent : HttpContent
+    {
+        private readonly byte[] _bytes;
+        public UnknownLengthContent(byte[] bytes, string mediaType)
+        {
+            _bytes = bytes;
+            Headers.ContentType = new(mediaType);
+        }
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(_bytes).AsTask();
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(new MemoryStream(_bytes, writable: false));
+    }
+    private sealed class SlowContent : HttpContent
+    {
+        public SlowContent() => Headers.ContentType = new("image/png");
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => Task.CompletedTask;
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(new SlowStream());
+    }
+    private sealed class SlowStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) => WaitForCancel(cancellationToken);
+        private static async ValueTask<int> WaitForCancel(CancellationToken token) { await Task.Delay(Timeout.InfiniteTimeSpan, token); return 0; }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
     }
 }

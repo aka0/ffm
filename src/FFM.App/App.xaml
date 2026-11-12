@@ -4,14 +4,37 @@
              xmlns:local="clr-namespace:FFM.App"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+        <SolidColorBrush x:Key="Ink" Color="#1B2D32"/>
+        <SolidColorBrush x:Key="Muted" Color="#687A7E"/>
+        <SolidColorBrush x:Key="Line" Color="#E0E8E8"/>
+        <SolidColorBrush x:Key="Teal" Color="#147C73"/>
+        <SolidColorBrush x:Key="Canvas" Color="#F5F7F8"/>
+        <SolidColorBrush x:Key="Surface" Color="White"/>
+        <SolidColorBrush x:Key="Panel" Color="#F1F3F2"/>
+        <SolidColorBrush x:Key="AccentSoft" Color="#EAF4F1"/>
+        <SolidColorBrush x:Key="InputBorder" Color="#D9E2E2"/>
+        <Style TargetType="Window">
+            <Setter Property="UseLayoutRounding" Value="True"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="11,9"/><Setter Property="FontSize" Value="13"/>
+            <Setter Property="BorderBrush" Value="{StaticResource InputBorder}"/><Setter Property="Background" Value="{StaticResource Surface}"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Padding" Value="9,7"/><Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="{StaticResource InputBorder}"/><Setter Property="FontSize" Value="13"/>
+        </Style>
         <Style TargetType="Button">
             <Setter Property="MinHeight" Value="40"/>
             <Setter Property="Padding" Value="14,9"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Background" Value="#147C73"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderBrush" Value="#147C73"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="Foreground" Value="{StaticResource Teal}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Teal}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -22,14 +45,27 @@
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#116D65"/></Trigger>
-                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#0C5A53"/></Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#6FD3BD"/></Trigger>
-                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.45"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#006B62"/><Setter TargetName="Chrome" Property="BorderThickness" Value="2"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#EAF4F2"/></Trigger>
+                <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#D6EBE7"/></Trigger>
+                <Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="#E6ECEC"/><Setter Property="BorderBrush" Value="#D5DEDE"/><Setter Property="Foreground" Value="#6B7C80"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{StaticResource Teal}"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderBrush" Value="{StaticResource Teal}"/>
+            <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#116D65"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#0C5A53"/></Trigger></Style.Triggers>
+        </Style>
+        <Style x:Key="Secondary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#147C73"/><Setter Property="BorderBrush" Value="#B8CECA"/>
+        </Style>
+        <Style x:Key="Danger" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#A33D3D"/><Setter Property="BorderBrush" Value="#D8B4B4"/>
+            <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#FCF0F0"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#F6DEDE"/></Trigger></Style.Triggers>
         </Style>
     </Application.Resources>
 </Application>

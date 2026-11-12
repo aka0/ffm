@@ -2,7 +2,7 @@ using System.Globalization;
 using System.IO;
 using System.Xml;
 
-namespace NGMapper.App.Services;
+namespace FFM.App.Services;
 
 public sealed record FacepackPortrait(string PlayerId, string ConfigPath, string SourcePath, string? ImagePath);
 
@@ -18,8 +18,31 @@ public sealed class FacepackCatalog
 
     public static bool IsInsideGraphics(string path)
     {
+        return GraphicsRootFor(path) is not null;
+    }
+
+    public static string? GraphicsRootFor(string path)
+    {
+        DirectoryInfo? outermost = null;
         for (DirectoryInfo? dir = new(Path.GetFullPath(path)); dir is not null; dir = dir.Parent)
-            if (string.Equals(dir.Name, "graphics", StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(dir.Name, "graphics", StringComparison.OrdinalIgnoreCase)) outermost = dir;
+        return outermost?.FullName;
+    }
+
+    internal static bool HasReparsePointBetween(string root, string path)
+    {
+        root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+        path = Path.GetFullPath(path);
+        if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return true;
+        var relative = Path.GetRelativePath(root, path);
+        var current = root;
+        if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+        foreach (var part in relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            if (!File.Exists(current) && !Directory.Exists(current)) continue;
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+        }
         return false;
     }
 
@@ -32,6 +55,13 @@ public sealed class FacepackCatalog
     });
 
     public IReadOnlyList<FacepackPortrait> Find(string id) => _portraits.TryGetValue(id, out var matches) ? matches : [];
+
+    public void UpdatePortrait(string id, string imagePath)
+    {
+        if (!_portraits.TryGetValue(id, out var matches)) return;
+        var fullPath = Path.GetFullPath(imagePath);
+        for (var i = 0; i < matches.Count; i++) matches[i] = matches[i] with { SourcePath = fullPath, ImagePath = fullPath };
+    }
 
     public static FacepackCatalog Load(string root, IReadOnlySet<string>? wantedIds = null, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default)
     {
@@ -69,6 +99,11 @@ public sealed class FacepackCatalog
                         continue;
                     }
                     var image = ResolveImage(source);
+                    if (image is not null && HasReparsePointBetween(root, image))
+                    {
+                        result._issues.Add($"Mapped image uses a junction or symbolic link: {config}");
+                        image = null;
+                    }
                     pending.Add(new FacepackPortrait(id, config, source, image));
                 }
                 // Commit only after the whole XML document validates.

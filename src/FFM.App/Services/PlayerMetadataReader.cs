@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Text;
 
-namespace NGMapper.App.Services;
+namespace FFM.App.Services;
 
 // Native FM27 schema-4000 name/person decoder. Layout reference: rhiever/fmsave (MIT).
 internal sealed class PlayerMetadataReader

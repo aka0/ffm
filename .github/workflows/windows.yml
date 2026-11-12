@@ -1,0 +1,24 @@
+name: Windows build and checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore src/FFM.App/FFM.App.csproj
+      - name: Build with warnings as errors
+        run: dotnet build src/FFM.App/FFM.App.csproj --no-restore -warnaserror
+      - name: Edit checks
+        run: dotnet run --project src/FFM.EditCheck
+      - name: Facepack checks
+        run: dotnet run --project src/FFM.FacepackCheck
+      - name: Synthetic save-reader checks
+        run: dotnet run --project src/FFM.ReaderCheck -- --synthetic

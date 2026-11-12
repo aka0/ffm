@@ -1,5 +1,5 @@
 using Microsoft.Win32;
-using NGMapper.App.Services;
+using FFM.App.Services;
 using System.IO;
 using System.Windows;
 
@@ -8,6 +8,7 @@ namespace FFM.App;
 public partial class SourcesWindow : Window
 {
     private bool _closed;
+    private bool _loading;
     public string GraphicsRoot { get; private set; } = "";
     public string SavePath { get; private set; } = "";
 
@@ -16,6 +17,7 @@ public partial class SourcesWindow : Window
         InitializeComponent();
         GraphicsPath.Text = graphics;
         SaveFilePath.Text = save;
+        UpdateValidation();
     }
 
     private void BrowseGraphics_Click(object sender, RoutedEventArgs e)
@@ -26,8 +28,27 @@ public partial class SourcesWindow : Window
 
     private void BrowseSave_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new OpenFileDialog { Title = "Choose Football Manager save", Filter = "Football Manager saves (*.fm)|*.fm", CheckFileExists = true };
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var games = Path.Combine(documents, "Sports Interactive", "Football Manager 27", "games");
+        var initial = File.Exists(SaveFilePath.Text) ? Path.GetDirectoryName(SaveFilePath.Text) : Directory.Exists(games) ? games : documents;
+        var picker = new OpenFileDialog { Title = "Choose Football Manager save", Filter = "Football Manager saves (*.fm)|*.fm", CheckFileExists = true, InitialDirectory = initial };
         if (picker.ShowDialog(this) == true) SaveFilePath.Text = picker.FileName;
+    }
+
+    private void Path_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => UpdateValidation();
+
+    private void UpdateValidation()
+    {
+        var graphicsValid = false;
+        try { graphicsValid = Directory.Exists(GraphicsPath.Text.Trim()) && FacepackCatalog.IsInsideGraphics(Path.GetFullPath(GraphicsPath.Text.Trim())); }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException) { }
+        var save = SaveFilePath.Text.Trim();
+        var saveValid = File.Exists(save) && string.Equals(Path.GetExtension(save), ".fm", StringComparison.OrdinalIgnoreCase);
+        GraphicsValidation.Text = graphicsValid ? "✓ Folder is inside the Football Manager graphics directory." : "Choose graphics or a folder inside it.";
+        GraphicsValidation.Foreground = graphicsValid ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.Gray;
+        SaveValidation.Text = saveValid ? "✓ Save file is ready; it will be opened read-only." : "Choose an existing Football Manager .fm save.";
+        SaveValidation.Foreground = saveValid ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.Gray;
+        if (!_loading) LoadButton.IsEnabled = graphicsValid && saveValid;
     }
 
     private async void Load_Click(object sender, RoutedEventArgs e)
@@ -41,6 +62,9 @@ public partial class SourcesWindow : Window
             if (string.IsNullOrWhiteSpace(SaveFilePath.Text) || !File.Exists(SaveFilePath.Text.Trim()) || !string.Equals(Path.GetExtension(SaveFilePath.Text.Trim()), ".fm", StringComparison.OrdinalIgnoreCase)) throw new IOException("Choose an existing Football Manager .fm save.");
             var save = Path.GetFullPath(SaveFilePath.Text.Trim());
             LoadButton.IsEnabled = false;
+            _loading = true;
+            GraphicsPath.IsEnabled = false;
+            SaveFilePath.IsEnabled = false;
             LoadButton.Content = "Checking…";
             var hasConfig = await Task.Run(() => FacepackCatalog.FindConfigs(graphics).Any());
             if (_closed) return;
@@ -51,13 +75,23 @@ public partial class SourcesWindow : Window
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            ErrorText.Text = ex.Message;
+            ErrorDetails.Text = ex.ToString();
+            ErrorText.Text = FriendlyErrors.Message(ex);
+            ErrorPanel.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            ErrorDetails.Text = ex.ToString();
+            ErrorText.Text = "Could not validate these sources: " + FriendlyErrors.Message(ex);
             ErrorPanel.Visibility = Visibility.Visible;
         }
         finally
         {
-            LoadButton.IsEnabled = true;
+            _loading = false;
+            GraphicsPath.IsEnabled = true;
+            SaveFilePath.IsEnabled = true;
             LoadButton.Content = "Load sources";
+            UpdateValidation();
         }
     }
 

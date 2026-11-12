@@ -5,6 +5,7 @@
   <Compile Include="..\FFM.App\Services\PortraitEdgeCleanup.cs" Link="PortraitEdgeCleanup.cs"/>
   <Compile Include="..\FFM.App\Services\PortraitClipboard.cs" Link="PortraitClipboard.cs"/>
   <Compile Include="..\FFM.App\Services\PortraitCommitService.cs" Link="PortraitCommitService.cs"/>
+  <Compile Include="..\FFM.App\Services\PortraitPromptBuilder.cs" Link="PortraitPromptBuilder.cs"/>
   <Compile Include="..\FFM.App\Services\FacepackCatalog.cs" Link="FacepackCatalog.cs"/>
   <Compile Include="..\FFM.App\Services\Models.cs" Link="Models.cs"/>
  </ItemGroup>

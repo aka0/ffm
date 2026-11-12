@@ -1,4 +1,4 @@
-namespace NGMapper.App.Services;
+namespace FFM.App.Services;
 
 public sealed record NewgenPlayer(string Id, int? Ethnicity, int? SkinTone, string? Nationality,
     string? FirstName = null, string? LastName = null, int? Age = null, DateOnly? BirthDate = null, int? NationId = null, string? Club = null)
@@ -21,4 +21,6 @@ public sealed record PlayerRecordScanOutcome(
     IReadOnlyList<string> AllPlayerIds,
     uint? MinimumUniqueId,
     uint? MaximumUniqueId,
-    IReadOnlyList<PlayerRecordIdentity> Identities);
+    IReadOnlyList<PlayerRecordIdentity> Identities,
+    int UndecodableNames = 0,
+    int AmbiguousCandidates = 0);

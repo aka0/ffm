@@ -1,6 +1,6 @@
 # FM27 reader validation
 
-Input: `Arthur Kao - Tottenham Backup.fm`. The production save is not used for ongoing checks. The scanner opens saves with `FileAccess.Read` and compares the full-file SHA-256 before and after inspection.
+Input: `Arthur Kao - Tottenham Backup.fm`. The production save is not used for ongoing checks. The scanner opens saves with `FileAccess.Read`, checks file size and modification time before/after inspection, and hashes the save header plus directory before/after scanning.
 
 FFM uses native C# parsing with ZstdSharp for container decompression. Python and fmsave are not runtime dependencies. The format reference is rhiever's MIT-licensed fmsave; attribution is in the README and third-party notices.
 
@@ -21,4 +21,4 @@ The current marker scan finds 35,292 kind-2 player objects with a 2002 game-visi
 
 First/last names and ages resolve for 34,091 newgens. The remaining 1,201 are retained by ID with unavailable metadata; ambiguous name windows are rejected. Club and readable nationality decoding remain to be ported. The primary nation byte is read but is a save-local identifier, not a country name.
 
-Run the native reader check with the backup path and `--validate`. It asserts the six identity/name/age fixtures, real-player exclusions, unique IDs and the FMRTE count. This console project links the same C# services as the WPF application.
+Run the native reader check with `--synthetic` for isolated valid/corrupt container and player-record fixtures, or use the backup path and `--validate` for the six identity/name/age fixtures, real-player exclusions, unique IDs and FMRTE count. The console project links the same C# services as the WPF application.

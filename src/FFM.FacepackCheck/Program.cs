@@ -1,4 +1,4 @@
-using NGMapper.App.Services;
+using FFM.App.Services;
 
 // Isolated facepack fixtures: never write to the user's graphics folder.
 var fixture = Path.Combine(Path.GetTempPath(), "FFM.FacepackCheck-" + Guid.NewGuid().ToString("N"));
@@ -28,17 +28,35 @@ File.WriteAllText(Path.Combine(root, "config.xml"), """
  <record from="xyz/nested folder/José/portrait one" to="graphics/pictures/person/2002069230/portrait"/>
 </list></record>
 """);
+var unsafeFolder = Path.Combine(root, "unsafe references");
+Directory.CreateDirectory(unsafeFolder);
+var outside = Path.Combine(fixture, "outside.png");
+File.WriteAllBytes(outside, [1]);
+var rooted = System.Security.SecurityElement.Escape(outside)!;
+File.WriteAllText(Path.Combine(unsafeFolder, "config.xml"), $"<record><record from=\"../../outside.png\" to=\"graphics/pictures/person/2002098250/portrait\"/><record from=\"{rooted}\" to=\"graphics/pictures/person/2002098449/portrait\"/></record>");
+var doctypeFolder = Path.Combine(root, "doctype");
+Directory.CreateDirectory(doctypeFolder);
+File.WriteAllText(Path.Combine(doctypeFolder, "config.xml"), "<!DOCTYPE root [<!ENTITY external \"unsafe\">]><root><record from=\"&external;\" to=\"graphics/pictures/person/2002098250/portrait\"/></root>");
+var symlinkCreated = false;
+try
+{
+    File.CreateSymbolicLink(Path.Combine(root, "linked.png"), outside);
+    File.WriteAllText(Path.Combine(root, "linked-config.xml"), "<record><record from=\"linked.png\" to=\"graphics/pictures/person/2002095290/portrait\"/></record>");
+    symlinkCreated = true;
+}
+catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { }
 var malformed = Path.Combine(root, "broken");
 Directory.CreateDirectory(malformed);
 File.WriteAllText(Path.Combine(malformed, "config.xml"), "<record><record from=\"../shared.jpg\" to=\"graphics/pictures/person/999/portrait\"/><broken>");
 var catalog = FacepackCatalog.Load(root);
 void Check(bool passes, string label) { if (!passes) throw new Exception(label); Console.WriteLine("PASS: " + label); }
-Check(catalog.ConfigCount == 4, "recursive discovery ignores folder names and config filename case");
+Check(catalog.ConfigCount == (symlinkCreated ? 7 : 6), "recursive discovery ignores folder names and config filename case");
 Check(catalog.Find("2002098250").Single().ImagePath == Path.Combine(a, "portrait one.png"), "nested config uses its own folder and aliases deduplicate");
 Check(catalog.Find("2002098449").Single().ImagePath == Path.Combine(root, "shared.jpg"), "relative parent path, explicit extension and portrait-only mappings");
 Check(catalog.Find("2002095290").Single().ImagePath is null, "missing image is reported without substitution");
 Check(catalog.Find("2002069230").Count == 2, "conflicting configs remain ambiguous instead of depending on traversal order");
-Check(catalog.Issues.Count == 1 && catalog.Find("999").Count == 0, "malformed config contributes no partial mappings");
+Check(catalog.Issues.Count == (symlinkCreated ? 5 : 4) && catalog.Find("999").Count == 0, "malformed, DTD, rooted and escaping config references are rejected");
+if (symlinkCreated) Check(catalog.Find("2002095290").Single().ImagePath is null, "mapped symlinks are not exposed as editable portraits");
 Check(FacepackCatalog.IsInsideGraphics(root) && FacepackCatalog.IsInsideGraphics(Path.GetDirectoryName(root)!) && !FacepackCatalog.IsInsideGraphics(fixture), "graphics root and arbitrary descendants are accepted");
 var filtered = FacepackCatalog.Load(root, new HashSet<string> { "2002098250" });
 Check(filtered.MappedPlayerCount == 1, "catalog filters to loaded newgen IDs");

@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace NGMapper.App.Services;
+namespace FFM.App.Services;
 
 /// <summary>
 /// Focused port of fmsave's FM26/FM27 player-record locator. FM27 build 27.0.0 uses
@@ -20,8 +20,6 @@ public sealed class PlayerRecordScanner
     public PlayerRecordScanOutcome Scan(byte[] gameDb, IProgress<ScanProgress> progress, CancellationToken cancellationToken = default, DateOnly? gameDate = null)
     {
         var candidates = new List<Candidate>();
-        var pindexes = new HashSet<uint>();
-        var uids = new HashSet<uint>();
         var cursor = 0;
         var nextReport = 4 * 1024 * 1024;
         var marker = Marker;
@@ -41,10 +39,12 @@ public sealed class PlayerRecordScanner
 
             var recordOffset = hit - MarkerOffset;
             if (!AcceptCandidate(gameDb, recordOffset, out var candidate)) continue;
-            if (!pindexes.Add(candidate.Pindex) || !uids.Add(candidate.Uid))
-                throw new System.IO.InvalidDataException("The save contains duplicate player-record identities; its player table cannot be read safely.");
             candidates.Add(candidate);
         }
+
+        var duplicatePindexes = candidates.GroupBy(c => c.Pindex).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+        var duplicateUids = candidates.GroupBy(c => c.Uid).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
+        var ambiguousCandidates = candidates.RemoveAll(c => duplicatePindexes.Contains(c.Pindex) || duplicateUids.Contains(c.Uid));
 
         candidates.Sort((left, right) => left.RecordOffset.CompareTo(right.RecordOffset));
         var metadataReader = gameDate.HasValue ? new PlayerMetadataReader(gameDb, gameDate.Value) : null;
@@ -53,6 +53,7 @@ public sealed class PlayerRecordScanner
         var allIds = new HashSet<string>(StringComparer.Ordinal);
         var withClosingId = 0;
         var newgenIdsByPrefix = 0;
+        var undecodableNames = 0;
         uint? minimumId = null;
         uint? maximumId = null;
         for (var i = 0; i < candidates.Count; i++)
@@ -63,7 +64,9 @@ public sealed class PlayerRecordScanner
             var uniqueId = FindClosingUniqueId(gameDb, candidate, windowEnd, out var closingOffset);
             if (uniqueId.HasValue)
             {
-                var metadata = metadataReader?.Read(candidate.RecordOffset + 100, closingOffset);
+                PlayerMetadataReader.Metadata? metadata;
+                try { metadata = metadataReader?.Read(candidate.RecordOffset + 100, closingOffset); }
+                catch (System.Text.DecoderFallbackException) { metadata = null; undecodableNames++; }
                 identities.Add(new PlayerRecordIdentity(uniqueId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), candidate.ObjectKind,
                     metadata?.FirstName, metadata?.LastName, metadata?.Age, metadata?.BirthDate, metadata?.NationId));
                 allIds.Add(uniqueId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -86,7 +89,7 @@ public sealed class PlayerRecordScanner
             }
         }
 
-        return new PlayerRecordScanOutcome(results, candidates.Count, withClosingId, newgenIdsByPrefix, allIds.ToArray(), minimumId, maximumId, identities);
+        return new PlayerRecordScanOutcome(results, candidates.Count, withClosingId, newgenIdsByPrefix, allIds.ToArray(), minimumId, maximumId, identities, undecodableNames, ambiguousCandidates);
     }
 
     private static bool AcceptCandidate(byte[] data, int recordOffset, out Candidate candidate)
