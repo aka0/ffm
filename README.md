@@ -66,6 +66,7 @@ So FFM never asks for an API key. It prepares the portrait and the prompt, opens
 | --- | --- |
 | `src/FFM.App` | The WPF app: windows plus the save reader, facepack catalog, edit session and commit services |
 | `src/FFM.EditCheck` | Self-contained checks for the edit, import, backup, rollback and recovery logic using synthetic files |
+| `src/FFM.UiCheck` | STA smoke checks that exercise the WPF player-selection to portrait-preparation path |
 | `src/FFM.ReaderCheck` | Diagnostics that validate the save reader against a real save |
 | `src/FFM.FacepackCheck` | Checks for facepack config discovery using isolated fixture folders |
 | `docs/` | Workflow notes, validation reports and the implementation plan |
@@ -75,6 +76,7 @@ Run the edit checks with:
 
 ```powershell
 dotnet run --project src/FFM.EditCheck
+dotnet run --project src/FFM.UiCheck
 ```
 
 They never touch your real facepack or save, change the system clipboard, or make network requests.

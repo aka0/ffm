@@ -7,6 +7,8 @@ using System.Windows.Media.Imaging;
 
 namespace FFM.App.Services;
 
+public sealed class PortraitCutoutRequiredException() : Exception("The edit does not retain enough of the original transparent cutout.") { }
+
 public sealed class PortraitEditSession : IDisposable
 {
     public required string PlayerId { get; init; }
@@ -51,8 +53,9 @@ public sealed class PortraitEditSession : IDisposable
         catch (UnauthorizedAccessException) { }
     }
 
-    public static PortraitEditSession Prepare(string id, string root, FacepackPortrait mapping, string prompt, string dataRoot)
+    public static PortraitEditSession Prepare(string id, string root, FacepackPortrait mapping, string prompt, string dataRoot, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!id.StartsWith("2002", StringComparison.Ordinal) || mapping.PlayerId != id || !uint.TryParse(id, out _)) throw new InvalidOperationException("Only a confirmed newgen can enter the editing workflow.");
         if (mapping.ImagePath is null) throw new FileNotFoundException("The mapped portrait is missing.");
         var bytes = ReadImageBytes(mapping.ImagePath);
@@ -67,6 +70,7 @@ public sealed class PortraitEditSession : IDisposable
         var originalPixels = Pixels(image);
         foreach (var version in PortraitCommitService.Versions(mapping.ImagePath).OrderBy(v => v.Number))
         {
+            if (cancellationToken.IsCancellationRequested) { TryDeleteFolder(folder); cancellationToken.ThrowIfCancellationRequested(); }
             try
             {
                 var reference = Decode(ReadImageBytes(version.Path));
@@ -81,6 +85,7 @@ public sealed class PortraitEditSession : IDisposable
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or FileFormatException) { }
         }
+        if (cancellationToken.IsCancellationRequested) { TryDeleteFolder(folder); cancellationToken.ThrowIfCancellationRequested(); }
         File.WriteAllText(Path.Combine(folder, "prompt.txt"), prompt, new UTF8Encoding(false));
         return new PortraitEditSession { PlayerId = id, FacepackRoot = Path.GetFullPath(root), OriginalPath = Path.GetFullPath(mapping.ImagePath), ConfigPath = mapping.ConfigPath,
             OriginalHash = Hash(bytes), ConfigHash = Hash(File.ReadAllBytes(mapping.ConfigPath)), Folder = folder, OriginalCopy = original, OriginalCopyHash = Hash(File.ReadAllBytes(original)),
@@ -103,7 +108,7 @@ public sealed class PortraitEditSession : IDisposable
         _importedBytes = bytes;
     }
 
-    public void ImportBytes(byte[] bytes, bool cleanEdges = true)
+    public void ImportBytes(byte[] bytes, bool cleanEdges = true, bool useOriginalCutout = false)
     {
         if (bytes.Length > 32 * 1024 * 1024) throw new InvalidDataException("Choose a portrait image smaller than 32 MB.");
         var snapshot = File.ReadAllBytes(OriginalCopy);
@@ -121,9 +126,7 @@ public sealed class PortraitEditSession : IDisposable
         var before = Pixels(original);
         var rendered = Pixels(render);
         var originalHasTransparency = HasTransparency(before);
-        var editedHasTransparency = HasTransparency(rendered);
-        if (originalHasTransparency && !editedHasTransparency)
-            throw new InvalidDataException("This result has an opaque background, but the original portrait uses transparency. Ask the image editor for a transparent PNG, then import it again. FFM has not enabled acceptance.");
+        if (originalHasTransparency && !useOriginalCutout && !RetainsTransparentCutout(before, rendered)) throw new PortraitCutoutRequiredException();
         byte[]? edgeReference = null;
         if (cleanEdges && EdgeReferenceCopy is not null)
         {
@@ -131,7 +134,7 @@ public sealed class PortraitEditSession : IDisposable
             if (Hash(reference) != EdgeReferenceHash) throw new InvalidDataException("The edge reference changed. Prepare a fresh edit.");
             edgeReference = Pixels(Decode(reference));
         }
-        var after = PortraitEdgeCleanup.Apply(before, rendered, original.PixelWidth, original.PixelHeight, cleanEdges, out var corrected, edgeReference);
+        var after = PortraitEdgeCleanup.Apply(before, rendered, original.PixelWidth, original.PixelHeight, cleanEdges, out var corrected, edgeReference, useOriginalCutout);
         var normalized = BitmapSource.Create(original.PixelWidth, original.PixelHeight, 96, 96, PixelFormats.Bgra32, null, after, original.PixelWidth * 4);
         normalized.Freeze();
         DiscardPreview();
@@ -176,6 +179,24 @@ public sealed class PortraitEditSession : IDisposable
     {
         for (var i = 3; i < pixels.Length; i += 4) if (pixels[i] < 250) return true;
         return false;
+    }
+    private static bool RetainsTransparentCutout(byte[] original, byte[] edited)
+    {
+        var transparentOriginal = 0;
+        var transparentRetained = 0;
+        for (var i = 3; i < original.Length; i += 4)
+        {
+            if (original[i] >= 250) continue;
+            transparentOriginal++;
+            if (edited[i] < 250) transparentRetained++;
+        }
+        return transparentOriginal == 0 || transparentRetained >= Math.Ceiling(transparentOriginal * 0.25);
+    }
+    private static void TryDeleteFolder(string folder)
+    {
+        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
     private static void SavePng(BitmapSource bitmap, string path)
     {

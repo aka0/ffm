@@ -1,4 +1,5 @@
 using FFM.App.Services;
+using System.Buffers.Binary;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Media;
@@ -27,16 +28,37 @@ internal static class Program
         var wrong = Path.Combine(Sandbox, "wrong.png");
         Image(wrong, 8, 4, 70);
         Throws(() => session.Import(wrong), "different crop/aspect ratio is rejected");
+        var oversizedHeader = Path.Combine(Sandbox, "oversized-header.png");
+        Image(oversizedHeader, 1, 1, 50);
+        var bombBytes = File.ReadAllBytes(oversizedHeader);
+        BinaryPrimitives.WriteUInt32BigEndian(bombBytes.AsSpan(16, 4), 50_000);
+        BinaryPrimitives.WriteUInt32BigEndian(bombBytes.AsSpan(20, 4), 50_000);
+        BinaryPrimitives.WriteUInt32BigEndian(bombBytes.AsSpan(29, 4), PngCrc32(bombBytes.AsSpan(12, 17)));
+        File.WriteAllBytes(oversizedHeader, bombBytes);
+        Throws(() => session.Import(oversizedHeader), "oversized PNG dimensions are rejected before pixel allocation");
         var opaque = Path.Combine(Sandbox, "flattened.png");
         Image(opaque, 8, 8, 70, transparentPixel: false);
-        Throws(() => session.Import(opaque), "flattened edit is rejected when the original requires transparency");
+        Throws<PortraitCutoutRequiredException>(() => session.Import(opaque), "flattened edit requests confirmation before replacing the original cutout");
+        session.ImportBytes(File.ReadAllBytes(opaque), cleanEdges: false, useOriginalCutout: true);
+        var fallback = PortraitEditSession.LoadBitmap(session.PreviewPath!);
+        Check(Alpha(fallback).SequenceEqual(Alpha(PortraitEditSession.LoadBitmap(pack.image))) && Pixels(fallback)[4] != Pixels(PortraitEditSession.LoadBitmap(pack.image))[4], "original-cutout fallback retains the alpha shape while using edited colors");
+        var sparseCutout = Pack("sparse-cutout", false);
+        Image(sparseCutout.image, 4, 4, 50, transparentPixel: true, transparentPixels: 8);
+        using (var sparseSession = PortraitEditSession.Prepare(Id, sparseCutout.root, FacepackCatalog.Load(sparseCutout.root).Find(Id).Single(), "Test cutout", Store))
+        {
+            Throws<PortraitCutoutRequiredException>(() => sparseSession.Import(candidate), "a few stray transparent pixels do not pass the cutout-retention threshold");
+            sparseSession.ImportBytes(File.ReadAllBytes(candidate), cleanEdges: false, useOriginalCutout: true);
+            Check(Alpha(PortraitEditSession.LoadBitmap(sparseSession.PreviewPath!)).SequenceEqual(Alpha(PortraitEditSession.LoadBitmap(sparseCutout.image))), "sparse-alpha fallback preserves the complete original cutout");
+        }
         var result = PortraitCommitService.Apply(session, Store);
         Check(result.ImagePath == pack.image && File.ReadAllBytes(result.BackupPath).SequenceEqual(original) && Path.GetFileName(result.BackupPath) == "original_prev1.png", "exclusive portrait replacement makes exact sibling prev1 backup first");
         Check(File.ReadAllBytes(pack.config).SequenceEqual(config), "exclusive replacement leaves config unchanged");
+        var indexBuilds = PortraitCommitService.ReferenceIndexBuildCount;
         var once = File.ReadAllBytes(pack.image);
         var second = Prepare(pack.root, candidate);
         Check(second.EdgeReferenceCopy is not null, "earliest matching backup is snapshotted as the edge-color reference");
         var result2 = PortraitCommitService.Apply(second, Store);
+        Check(PortraitCommitService.ReferenceIndexBuildCount == indexBuilds, "accept reuses cached graphics references while config metadata is unchanged");
         Check(Path.GetFileName(result2.BackupPath) == "original_prev2.png" && File.ReadAllBytes(result2.BackupPath).SequenceEqual(once), "repeated acceptance increments version and keeps exact previous bytes");
         var restoration = Prepare(pack.root, result.BackupPath);
         restoration.ImportRestore(result.BackupPath);
@@ -47,6 +69,14 @@ internal static class Program
         var changed = File.ReadAllBytes(pack.image);
         Throws(() => PortraitCommitService.Apply(stale, Store), "externally changed portrait blocks stale acceptance");
         Check(File.ReadAllBytes(pack.image).SequenceEqual(changed), "stale rejection preserves the external change");
+        var indexPack = Pack("index-invalidation", false);
+        PortraitCommitService.Apply(Prepare(indexPack.root, candidate), Store);
+        var referenceBuildsBeforeChange = PortraitCommitService.ReferenceIndexBuildCount;
+        var newReference = Path.Combine(indexPack.root, "other", "config.xml");
+        Directory.CreateDirectory(Path.GetDirectoryName(newReference)!);
+        File.WriteAllText(newReference, "<record><record from=\"../original.png\" to=\"graphics/pictures/person/2000026194/portrait\"/></record>");
+        var afterConfigChange = PortraitCommitService.Apply(Prepare(indexPack.root, candidate), Store);
+        Check(afterConfigChange.IsolatedSharedImage && PortraitCommitService.ReferenceIndexBuildCount == referenceBuildsBeforeChange + 1, "new graphics configs invalidate the shared-portrait reference index before acceptance");
         var failedAccept = Pack("failed-accept", false);
         var failedSession = Prepare(failedAccept.root, candidate);
         using (var hold = new FileStream(failedAccept.image, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -121,12 +151,43 @@ internal static class Program
         File.WriteAllBytes(recoveryPack.image, after);
         var journal = new PortraitCommitService.Journal { Root = recoveryPack.root, Mutations = [new(recoveryPack.image, PortraitEditSession.Hash(before), PortraitEditSession.Hash(after), beforeFile, recoveryPack.image + ".stage")] };
         File.WriteAllText(Path.Combine(transaction, "journal.json"), JsonSerializer.Serialize(journal));
-        Check(PortraitCommitService.Recover(Store).Count == 0 && File.ReadAllBytes(recoveryPack.image).SequenceEqual(before), "startup recovery restores interrupted transaction from verified preimage");
+        var recovered = PortraitCommitService.RecoverDetailed(Store);
+        Check(recovered.Errors.Count == 0 && recovered.RolledBackOperations == 1 && File.ReadAllBytes(recoveryPack.image).SequenceEqual(before), "startup recovery restores the interrupted portrait and reports its rollback");
         journal.State = "Prepared";
         File.WriteAllText(Path.Combine(transaction, "journal.json"), JsonSerializer.Serialize(journal));
         Image(recoveryPack.image, 4, 4, 123);
         var external = File.ReadAllBytes(recoveryPack.image);
-        Check(PortraitCommitService.Recover(Store).Count == 1 && File.ReadAllBytes(recoveryPack.image).SequenceEqual(external), "recovery detects external edits and retains them with backups");
+        var blockedRecovery = PortraitCommitService.RecoverDetailed(Store);
+        Check(blockedRecovery.Errors.Count == 1 && blockedRecovery.RolledBackOperations == 0 && File.ReadAllBytes(recoveryPack.image).SequenceEqual(external), "recovery detects external edits and retains them with backups");
+        foreach (var faultPoint in new[] { "prepared-journal", "mutation-1-journaled", "mutation-1-staged", "mutation-1-applied", "mutation-2-journaled", "mutation-2-staged", "mutation-2-applied" })
+        {
+            var faultPack = Pack("fault-" + faultPoint, false);
+            var sourceBefore = File.ReadAllBytes(faultPack.image);
+            var faultStore = Path.Combine(Sandbox, "fault-store-" + faultPoint);
+            using var faultSession = PortraitEditSession.Prepare(Id, faultPack.root, FacepackCatalog.Load(faultPack.root).Find(Id).Single(), "Test fault recovery", faultStore);
+            faultSession.Import(candidate);
+            PortraitCommitService.FaultInjector = point => { if (point == faultPoint) throw new PortraitCommitService.SimulatedCrashException(point); };
+            try { PortraitCommitService.Apply(faultSession, faultStore); throw new Exception("Fault injection was not reached: " + faultPoint); }
+            catch (PortraitCommitService.SimulatedCrashException) { }
+            finally { PortraitCommitService.FaultInjector = null; }
+            var recoveredFault = PortraitCommitService.RecoverDetailed(faultStore);
+            Check(recoveredFault.Errors.Count == 0 && recoveredFault.RolledBackOperations == 1 && File.ReadAllBytes(faultPack.image).SequenceEqual(sourceBefore) && PortraitCommitService.Versions(faultPack.image).Count == 0,
+                $"journal recovery returns the facepack to its original state after interruption at {faultPoint}");
+        }
+        var isolatedFaultPack = Pack("fault-isolated-config", true);
+        var isolatedFaultSource = File.ReadAllBytes(isolatedFaultPack.image);
+        var isolatedFaultConfig = File.ReadAllBytes(isolatedFaultPack.config);
+        var isolatedFaultStore = Path.Combine(Sandbox, "fault-isolated-config-store");
+        using (var isolatedFaultSession = PortraitEditSession.Prepare(Id, isolatedFaultPack.root, FacepackCatalog.Load(isolatedFaultPack.root).Find(Id).Single(), "Test isolated rollback", isolatedFaultStore))
+        {
+            isolatedFaultSession.Import(candidate);
+            PortraitCommitService.FaultInjector = point => { if (point == "mutation-3-applied") throw new PortraitCommitService.SimulatedCrashException(point); };
+            try { PortraitCommitService.Apply(isolatedFaultSession, isolatedFaultStore); throw new Exception("Config fault injection was not reached."); }
+            catch (PortraitCommitService.SimulatedCrashException) { }
+            finally { PortraitCommitService.FaultInjector = null; }
+        }
+        var isolatedRecovery = PortraitCommitService.RecoverDetailed(isolatedFaultStore);
+        Check(isolatedRecovery.Errors.Count == 0 && isolatedRecovery.RolledBackOperations == 1 && File.ReadAllBytes(isolatedFaultPack.image).SequenceEqual(isolatedFaultSource) && File.ReadAllBytes(isolatedFaultPack.config).SequenceEqual(isolatedFaultConfig) && !File.Exists(Path.Combine(isolatedFaultPack.root, Id + ".png")), "recovery rolls back an interrupted shared-portrait config isolation");
         ImageTransferChecks.Run(session, candidate);
         var staleEdit = Path.Combine(Store, "edits", "old-edit");
         Directory.CreateDirectory(staleEdit);
@@ -154,25 +215,26 @@ internal static class Program
     }
     private static void PromptChecks()
     {
-        var current = PortraitPromptBuilder.Build("Keep current hairstyle", "Keep current facial hair", 17, 17);
+        var current = PortraitPromptBuilder.Build(HairstylePreset.KeepCurrent, FacialHairPreset.KeepCurrent, 17, 17);
         Check(current.Contains("No change selected", StringComparison.Ordinal) && !current.Contains("Age the person's appearance", StringComparison.Ordinal), "age +0 keeps the age prompt unchanged");
-        var slight = PortraitPromptBuilder.Build("Keep current hairstyle", "Keep current facial hair", 17, 19);
+        var slight = PortraitPromptBuilder.Build(HairstylePreset.KeepCurrent, FacialHairPreset.KeepCurrent, 17, 19);
         Check(slight.Contains("barely noticeable", StringComparison.Ordinal) && slight.Contains("subtle natural variation", StringComparison.Ordinal) && slight.Contains("Never add facial hair", StringComparison.Ordinal), "age +2 uses subtle hair variation and never invents facial hair");
-        var mature = PortraitPromptBuilder.Build("Keep current hairstyle", "Keep current facial hair", 17, 32);
+        var mature = PortraitPromptBuilder.Build(HairstylePreset.KeepCurrent, FacialHairPreset.KeepCurrent, 17, 32);
         Check(mature.Contains("clear but natural age progression", StringComparison.Ordinal) && mature.Contains("mild thinning", StringComparison.Ordinal) && mature.Contains("grey at the temples", StringComparison.Ordinal), "age +15 adds age-scaled natural hair and texture changes");
-        var hairstyles = new[] { "Keep current hairstyle", "Buzz cut", "Crew cut", "Textured crop", "Undercut", "Long tied back" };
-        var beards = new[] { "Keep current facial hair", "Light stubble", "Heavy stubble", "Short beard", "Full beard", "Goatee", "Circle beard", "Van Dyke", "Balbo" };
+        var hairstyles = Enum.GetValues<HairstylePreset>();
+        var beards = Enum.GetValues<FacialHairPreset>();
         var targets = new int?[] { 17, 19, 22, 27, 32, 37 };
         var combinationsValid = hairstyles.All(hair => beards.All(beard => targets.All(target =>
         {
-            var prompt = PortraitPromptBuilder.Build(hair, beard, 17, target);
-            var changed = hair != hairstyles[0] || beard != beards[0] || target > 17;
+          var prompt = PortraitPromptBuilder.Build(hair, beard, 17, target);
+          var changed = hair != HairstylePreset.KeepCurrent || beard != FacialHairPreset.KeepCurrent || target > 17;
             return prompt.Contains("Preserve the same person's identity", StringComparison.Ordinal) &&
                    prompt.Contains("Return a PNG", StringComparison.Ordinal) &&
                    (!changed || prompt.Contains("Make exactly these requested changes:", StringComparison.Ordinal) && !prompt.Contains("No change selected.", StringComparison.Ordinal)) &&
                    !prompt.Contains("Change only", StringComparison.Ordinal) && !prompt.Contains("Age only", StringComparison.Ordinal);
         })));
-        Check(combinationsValid, "all hairstyle, facial-hair and age preset combinations produce a consistent focused prompt");
+        Check(combinationsValid, "all tagged hairstyle, facial-hair and age combinations produce a consistent focused prompt");
+        Check(PortraitPromptBuilder.Build(HairstylePreset.TexturedCrop, FacialHairPreset.ShortBeard, 20, 20).Contains("matching the hair color", StringComparison.Ordinal), "facial-hair color follows the selected hairstyle color");
     }
     private static (string root, string image, string config) Pack(string name, bool shared)
     {
@@ -190,10 +252,10 @@ internal static class Program
         session.Import(candidate);
         return session;
     }
-    private static void Image(string path, int width, int height, byte color, bool transparentPixel = true)
+    private static void Image(string path, int width, int height, byte color, bool transparentPixel = true, int transparentPixels = 1)
     {
         var pixels = new byte[width * height * 4];
-        for (var i = 0; i < pixels.Length; i += 4) { pixels[i] = color; pixels[i + 1] = 80; pixels[i + 2] = 150; pixels[i + 3] = transparentPixel && i == 0 ? (byte)0 : (byte)255; }
+        for (var i = 0; i < pixels.Length; i += 4) { pixels[i] = color; pixels[i + 1] = 80; pixels[i + 2] = 150; pixels[i + 3] = transparentPixel && i / 4 < transparentPixels ? (byte)0 : (byte)255; }
         var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
@@ -208,6 +270,17 @@ internal static class Program
         return bytes;
     }
     private static byte[] Alpha(BitmapSource image) => Pixels(image).Where((b, i) => i % 4 == 3).ToArray();
+    private static uint PngCrc32(ReadOnlySpan<byte> bytes)
+    {
+        var crc = 0xFFFFFFFFu;
+        foreach (var value in bytes)
+        {
+            crc ^= value;
+            for (var bit = 0; bit < 8; bit++) crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+        }
+        return ~crc;
+    }
     private static void Check(bool condition, string message) { if (!condition) throw new Exception("FAIL: " + message); Console.WriteLine("PASS: " + message); }
     private static void Throws(Action action, string message) { try { action(); } catch (Exception ex) when (ex is IOException or InvalidOperationException or InvalidDataException) { Console.WriteLine("PASS: " + message); return; } throw new Exception("FAIL: " + message); }
+    private static void Throws<T>(Action action, string message) where T : Exception { try { action(); } catch (T) { Console.WriteLine("PASS: " + message); return; } throw new Exception("FAIL: " + message); }
 }

@@ -7,9 +7,18 @@ namespace FFM.App.Services;
 
 public sealed record PortraitCommitResult(string ImagePath, string BackupPath, bool IsolatedSharedImage);
 public sealed record PortraitVersion(int Number, string Path);
+public sealed record PortraitRecoveryResult(IReadOnlyList<string> Errors, int RolledBackOperations);
 
 public static class PortraitCommitService
 {
+    internal sealed class SimulatedCrashException(string point) : Exception($"Simulated process interruption at {point}.") { }
+    internal static Action<string>? FaultInjector { get; set; }
+    private sealed record ConfigReference(string Config, string PlayerId, string From);
+    private sealed record ConfigStamp(string Path, long Length, long LastWriteTicks);
+    private sealed record ReferenceIndex(IReadOnlyList<ConfigStamp> Stamps, IReadOnlyList<ConfigReference> References, IReadOnlyList<string> Errors);
+    private static readonly object ReferenceIndexGate = new();
+    private static readonly Dictionary<string, ReferenceIndex> ReferenceIndexes = new(StringComparer.OrdinalIgnoreCase);
+    internal static int ReferenceIndexBuildCount { get; private set; }
     public sealed record Mutation(string Target, string? BeforeHash, string AfterHash, string? BeforeFile, string Stage);
     public sealed class Journal
     {
@@ -36,30 +45,19 @@ public static class PortraitCommitService
         var graphics = FacepackCatalog.GraphicsRootFor(root) is { } graphicsRoot
             ? new DirectoryInfo(graphicsRoot)
             : throw new IOException("The graphics directory could not be found.");
-        // Inspect all mappings, including real players and icons, before deciding whether
-        // the source image can be replaced. The UI's newgen-only index cannot establish this.
-        foreach (var config in FacepackCatalog.FindConfigs(graphics.FullName))
+        // Cache references to avoid reparsing every config on each portrait acceptance.
+        var referenceIndex = GetReferenceIndex(graphics.FullName);
+        if (referenceIndex.Errors.Count > 0)
+            throw new IOException("FFM could not safely inspect every graphics config, so the portrait was not changed: " + string.Join("; ", referenceIndex.Errors.Take(3)));
+        foreach (var reference in referenceIndex.References)
         {
-            if ((File.GetAttributes(config) & FileAttributes.ReparsePoint) != 0) continue;
-            using var reader = XmlReader.Create(config, XmlSettings());
-            var beforeHash = PortraitEditSession.Hash(File.ReadAllBytes(config));
-            var selected = false;
-            while (reader.Read())
+            if (reference.PlayerId == session.PlayerId)
             {
-                if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "record") continue;
-                var from = reader.GetAttribute("from");
-                if (string.IsNullOrWhiteSpace(from)) continue;
-                var id = FacepackCatalog.PlayerId(reader.GetAttribute("to"));
-                var matches = PointsTo(config, from, session.OriginalPath);
-                if (id == session.PlayerId)
-                {
-                    RequireInside(root, config);
-                    if (!matches) throw new IOException("This player has another portrait mapping. Reload sources and resolve the conflict before accepting.");
-                    selected = true;
-                }
-                else if (matches) shared = true;
+                RequireInside(root, reference.Config);
+                if (!PointsTo(reference.Config, reference.From, session.OriginalPath)) throw new IOException("This player has another portrait mapping. Reload sources and resolve the conflict before accepting.");
+                configs.TryAdd(reference.Config, PortraitEditSession.Hash(File.ReadAllBytes(reference.Config)));
             }
-            if (selected) configs.Add(config, beforeHash);
+            else if (PointsTo(reference.Config, reference.From, session.OriginalPath)) shared = true;
         }
         if (!configs.ContainsKey(session.ConfigPath)) throw new IOException("The selected player's mapping is no longer present.");
         var isolate = shared || !Path.GetExtension(session.OriginalPath).Equals(".png", StringComparison.OrdinalIgnoreCase);
@@ -73,12 +71,17 @@ public static class PortraitCommitService
         Directory.CreateDirectory(folder);
         var journal = new Journal { Root = root };
         string? backup = null;
+        var interrupted = false;
         try
         {
             WriteJournal(folder, journal);
+            FaultInjector?.Invoke("prepared-journal");
+            // Journal the backup creation itself before staging it, so recovery removes an
+            // unused numbered backup if the process stops before replacing the portrait.
+            backup = ReserveBackupPath(target, Path.GetExtension(session.OriginalPath));
+            RegisterAndStage(journal, backup, null, originals, folder);
             var targetBefore = isolate ? null : originals;
-            AddMutation(journal, target, targetBefore, edited, folder);
-            WriteJournal(folder, journal);
+            RegisterAndStage(journal, target, targetBefore, edited, folder);
             if (isolate)
             {
                 foreach (var (config, hash) in configs)
@@ -96,17 +99,14 @@ public static class PortraitCommitService
                     }
                     using var output = new MemoryStream();
                     doc.Save(output, SaveOptions.DisableFormatting);
-                    AddMutation(journal, config, bytes, output.ToArray(), folder);
-                    WriteJournal(folder, journal);
+                    RegisterAndStage(journal, config, bytes, output.ToArray(), folder);
                 }
             }
-            // Back up exact original bytes, beside the active portrait, before any replacement.
-            backup = ReserveBackup(target, Path.GetExtension(session.OriginalPath), originals);
-            WriteJournal(folder, journal);
             CheckHash(session.OriginalPath, session.OriginalHash, "The original portrait changed before acceptance.");
             foreach (var (config, hash) in configs) CheckHash(config, hash, "A facepack config changed before acceptance.");
-            foreach (var mutation in journal.Mutations)
+            for (var index = 0; index < journal.Mutations.Count; index++)
             {
+                var mutation = journal.Mutations[index];
                 if (mutation.BeforeHash is null)
                 {
                     if (File.Exists(mutation.Target)) throw new IOException("The new portrait filename was created by another process. Retry the edit.");
@@ -118,10 +118,17 @@ public static class PortraitCommitService
                     File.Replace(mutation.Stage, mutation.Target, null);
                 }
                 CheckHash(mutation.Target, mutation.AfterHash, "The written portrait or config could not be verified.");
+                FaultInjector?.Invoke($"mutation-{index + 1}-applied");
             }
             journal.State = "Committed";
             WriteJournal(folder, journal);
+            FaultInjector?.Invoke("committed-journal");
             return new PortraitCommitResult(target, backup, shared);
+        }
+        catch (SimulatedCrashException)
+        {
+            interrupted = true;
+            throw;
         }
         catch (Exception operationError)
         {
@@ -130,7 +137,6 @@ public static class PortraitCommitService
                 RollBack(journal);
                 journal.State = "RolledBack";
                 WriteJournal(folder, journal);
-                if (backup is not null && File.Exists(backup) && PortraitEditSession.Hash(File.ReadAllBytes(backup)) == PortraitEditSession.Hash(originals)) File.Delete(backup);
             }
             catch (Exception recoveryError)
             {
@@ -140,7 +146,48 @@ public static class PortraitCommitService
         }
         finally
         {
-            foreach (var mutation in journal.Mutations) if (File.Exists(mutation.Stage)) File.Delete(mutation.Stage);
+            if (!interrupted)
+                foreach (var mutation in journal.Mutations) if (File.Exists(mutation.Stage)) File.Delete(mutation.Stage);
+        }
+    }
+
+    private static ReferenceIndex GetReferenceIndex(string graphicsRoot)
+    {
+        var paths = FacepackCatalog.FindConfigs(graphicsRoot).ToArray();
+        var stamps = paths.Select(path =>
+        {
+            var info = new FileInfo(path);
+            return new ConfigStamp(Path.GetFullPath(path), info.Length, info.LastWriteTimeUtc.Ticks);
+        }).OrderBy(stamp => stamp.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+        var key = Path.GetFullPath(graphicsRoot);
+        lock (ReferenceIndexGate)
+        {
+            if (ReferenceIndexes.TryGetValue(key, out var cached) && cached.Stamps.SequenceEqual(stamps)) return cached;
+            var references = new List<ConfigReference>();
+            var errors = new List<string>();
+            foreach (var stamp in stamps)
+            {
+                try
+                {
+                    if ((File.GetAttributes(stamp.Path) & FileAttributes.ReparsePoint) != 0) continue;
+                    using var reader = XmlReader.Create(stamp.Path, XmlSettings());
+                    while (reader.Read())
+                    {
+                        if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "record") continue;
+                        var from = reader.GetAttribute("from");
+                        var id = FacepackCatalog.PlayerId(reader.GetAttribute("to"));
+                        if (!string.IsNullOrWhiteSpace(from) && id is not null) references.Add(new ConfigReference(stamp.Path, id, from));
+                    }
+                }
+                catch (Exception ex) when (ex is XmlException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    errors.Add($"{stamp.Path}: {ex.Message}");
+                }
+            }
+            var result = new ReferenceIndex(stamps, references, errors);
+            ReferenceIndexes[key] = result;
+            ReferenceIndexBuildCount++;
+            return result;
         }
     }
 
@@ -152,11 +199,15 @@ public static class PortraitCommitService
     }
 
     public static IReadOnlyList<string> Recover(string dataRoot)
+        => RecoverDetailed(dataRoot).Errors;
+
+    public static PortraitRecoveryResult RecoverDetailed(string dataRoot)
     {
         var errors = new List<string>();
+        var rolledBack = 0;
         var graphicsRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var root = Path.Combine(dataRoot, "transactions");
-        if (!Directory.Exists(root)) return errors;
+        if (!Directory.Exists(root)) return new PortraitRecoveryResult(errors, rolledBack);
         foreach (var path in Directory.EnumerateFiles(root, "journal.json", SearchOption.AllDirectories))
         {
             try
@@ -175,13 +226,14 @@ public static class PortraitCommitService
                 RollBack(journal);
                 journal.State = "RolledBack";
                 WriteJournal(Path.GetDirectoryName(path)!, journal);
+                rolledBack++;
                 foreach (var mutation in journal.Mutations) TryDelete(mutation.Stage);
             }
             catch (Exception ex) { errors.Add($"{path}: {ex.Message}"); }
         }
         if (errors.Count == 0)
             foreach (var graphicsRoot in graphicsRoots) RemoveOrphanStages(graphicsRoot);
-        return errors;
+        return new PortraitRecoveryResult(errors, rolledBack);
     }
 
     public static void PruneTemporaryData(string dataRoot, TimeSpan? retention = null)
@@ -248,13 +300,17 @@ public static class PortraitCommitService
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
-    private static void AddMutation(Journal journal, string target, byte[]? before, byte[] after, string folder)
+    private static void RegisterAndStage(Journal journal, string target, byte[]? before, byte[] after, string folder)
     {
         var beforeFile = before is null ? null : Path.Combine(folder, journal.Mutations.Count + ".before");
-        if (beforeFile is not null) DurableWrite(beforeFile, before!);
         var stage = Path.Combine(Path.GetDirectoryName(target)!, ".ffm-" + Guid.NewGuid().ToString("N") + ".tmp");
+        var mutation = new Mutation(target, before is null ? null : PortraitEditSession.Hash(before), PortraitEditSession.Hash(after), beforeFile, stage);
+        journal.Mutations.Add(mutation);
+        WriteJournal(folder, journal);
+        FaultInjector?.Invoke($"mutation-{journal.Mutations.Count}-journaled");
+        if (beforeFile is not null) DurableWrite(beforeFile, before!);
         DurableWrite(stage, after);
-        journal.Mutations.Add(new Mutation(target, before is null ? null : PortraitEditSession.Hash(before), PortraitEditSession.Hash(after), beforeFile, stage));
+        FaultInjector?.Invoke($"mutation-{journal.Mutations.Count}-staged");
     }
     private static void RollBack(Journal journal)
     {
@@ -280,13 +336,13 @@ public static class PortraitCommitService
             }
         }
     }
-    private static string ReserveBackup(string target, string originalExtension, byte[] bytes)
+    private static string ReserveBackupPath(string target, string originalExtension)
     {
         var stem = Path.GetFileNameWithoutExtension(target);
         var version = Versions(target).Select(v => v.Number).DefaultIfEmpty(0).Max() + 1;
-        var path = Path.Combine(Path.GetDirectoryName(target)!, $"{stem}_prev{version}{originalExtension}");
-        DurableWrite(path, bytes);
-        CheckHash(path, PortraitEditSession.Hash(bytes), "The previous portrait backup failed verification.");
+        string path;
+        do { path = Path.Combine(Path.GetDirectoryName(target)!, $"{stem}_prev{version++}{originalExtension}"); }
+        while (File.Exists(path));
         return path;
     }
     private static int VersionNumber(string path, string stem) => int.TryParse(Path.GetFileNameWithoutExtension(path)[(stem.Length + 5)..], out var number) ? number : -1;

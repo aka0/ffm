@@ -11,7 +11,14 @@ namespace FFM.App.Services;
 public static class PortraitClipboard
 {
     public const int MaximumBytes = 32 * 1024 * 1024;
-    private static readonly HttpClient Downloads = new(new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
+    private static readonly HttpClient Downloads = new(CreatePublicHandler()) { Timeout = TimeSpan.FromSeconds(20) };
+
+    private static SocketsHttpHandler CreatePublicHandler() => new()
+    {
+        UseCookies = false,
+        AllowAutoRedirect = false,
+        ConnectCallback = async (context, token) => await ConnectToPublicHostAsync(context.DnsEndPoint.Host, context.DnsEndPoint.Port, token)
+    };
 
     public static string OriginalFilePath(PortraitEditSession session)
     {
@@ -28,7 +35,7 @@ public static class PortraitClipboard
         return data;
     }
 
-    public static async Task<byte[]> ReadImageAsync(IDataObject data, CancellationToken token = default, HttpClient? downloads = null, Func<string, CancellationToken, Task<IPAddress[]>>? resolveHost = null)
+    public static async Task<byte[]> ReadImageAsync(IDataObject data, CancellationToken token = default, HttpClient? downloads = null, Func<string, CancellationToken, Task<IPAddress[]>>? resolveHost = null, Func<Uri, Task<bool>>? confirmRemote = null)
     {
         if (data.GetDataPresent("FFM.OriginalPortrait")) throw new InvalidDataException("This clipboard contains the original portrait. Copy the finished image from the browser, then paste it here.");
         if (data.GetDataPresent(DataFormats.FileDrop) && data.GetData(DataFormats.FileDrop) is string[] files)
@@ -76,6 +83,7 @@ public static class PortraitClipboard
         for (var redirects = 0; redirects <= 3; redirects++)
         {
             await EnsurePublicHostAsync(uri, token, resolveHost);
+            if (confirmRemote is null || !await confirmRemote(uri)) throw new InvalidDataException($"Image download from {uri.IdnHost} was not confirmed. Use Copy image or import a downloaded image file.");
             using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, token);
             if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location is Uri location)
             {
@@ -95,6 +103,40 @@ public static class PortraitClipboard
     private static async Task EnsurePublicHostAsync(Uri uri, CancellationToken token, Func<string, CancellationToken, Task<IPAddress[]>>? resolver)
     {
         var host = uri.DnsSafeHost.TrimEnd('.');
+        _ = await ResolvePublicAddressesAsync(host, token, resolver);
+    }
+
+    internal static async Task<Stream> ConnectToPublicHostAsync(string host, int port, CancellationToken token,
+        Func<string, CancellationToken, Task<IPAddress[]>>? resolver = null,
+        Func<IPAddress, int, CancellationToken, Task<Stream>>? connect = null)
+    {
+        var addresses = await ResolvePublicAddressesAsync(host.TrimEnd('.'), token, resolver);
+        Exception? lastError = null;
+        foreach (var address in addresses)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                if (connect is not null) return await connect(address, port, token);
+                var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(new IPEndPoint(address, port), token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            }
+            catch (Exception ex) when (ex is SocketException or IOException)
+            {
+                lastError = ex;
+            }
+        }
+        if (lastError is not null) throw lastError;
+        throw NoImage();
+    }
+
+    private static async Task<IPAddress[]> ResolvePublicAddressesAsync(string host, CancellationToken token, Func<string, CancellationToken, Task<IPAddress[]>>? resolver)
+    {
         if (host.Length == 0 || host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || !host.Contains('.') || host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase) || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)) throw NoImage();
         IPAddress[] addresses;
         if (IPAddress.TryParse(host, out var literal)) addresses = [literal];
@@ -104,6 +146,7 @@ public static class PortraitClipboard
             catch (Exception ex) when (ex is SocketException or ArgumentException) { throw NoImage(); }
         }
         if (addresses.Length == 0 || addresses.Any(IsNonPublicAddress)) throw NoImage();
+        return addresses;
     }
 
     private static bool IsNonPublicAddress(IPAddress address)

@@ -13,9 +13,9 @@
         <TextBox x:Name="IssuesText" Grid.Row="1" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
                  FontFamily="Consolas" FontSize="12" Padding="10" AutomationProperties.Name="Facepack config issues"/>
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button Content="Copy details" Style="{StaticResource Secondary}" Click="Copy_Click" Margin="0,0,10,0"/>
-            <Button Content="Close" Style="{StaticResource Primary}" IsCancel="True"/>
-        </StackPanel>
+        <Grid Grid.Row="2" Margin="0,16,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="CopyStatus" VerticalAlignment="Center" Foreground="{StaticResource Muted}" AutomationProperties.LiveSetting="Polite"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal"><Button Content="Copy details" Style="{StaticResource Secondary}" Click="Copy_Click" Margin="0,0,10,0"/><Button Content="Close" Style="{StaticResource Primary}" IsCancel="True"/></StackPanel>
+        </Grid>
     </Grid>
 </Window>

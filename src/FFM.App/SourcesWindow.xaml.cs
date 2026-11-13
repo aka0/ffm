@@ -45,11 +45,13 @@ public partial class SourcesWindow : Window
         var save = SaveFilePath.Text.Trim();
         var saveValid = File.Exists(save) && string.Equals(Path.GetExtension(save), ".fm", StringComparison.OrdinalIgnoreCase);
         GraphicsValidation.Text = graphicsValid ? "✓ Folder is inside the Football Manager graphics directory." : "Choose graphics or a folder inside it.";
-        GraphicsValidation.Foreground = graphicsValid ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.Gray;
+        GraphicsValidation.Foreground = SystemParameters.HighContrast ? (graphicsValid ? SystemColors.HighlightBrush : SystemColors.GrayTextBrush) : graphicsValid ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.Gray;
         SaveValidation.Text = saveValid ? "✓ Save file is ready; it will be opened read-only." : "Choose an existing Football Manager .fm save.";
-        SaveValidation.Foreground = saveValid ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.Gray;
+        SaveValidation.Foreground = SystemParameters.HighContrast ? (saveValid ? SystemColors.HighlightBrush : SystemColors.GrayTextBrush) : saveValid ? System.Windows.Media.Brushes.SeaGreen : System.Windows.Media.Brushes.Gray;
         if (!_loading) LoadButton.IsEnabled = graphicsValid && saveValid;
     }
+
+    internal void RefreshValidationTheme() => UpdateValidation();
 
     private async void Load_Click(object sender, RoutedEventArgs e)
     {

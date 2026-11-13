@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 
 namespace FFM.App;
 
@@ -12,6 +14,7 @@ namespace FFM.App;
 public partial class App : System.Windows.Application
 {
     private readonly string _logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FFM", "logs");
+    private static readonly ConditionalWeakTable<DependencyObject, Dictionary<DependencyProperty, object?>> OriginalColors = new();
 
     public App()
     {
@@ -23,34 +26,63 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler(ApplyHighContrast));
+        SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
         base.OnStartup(e);
+    }
+
+    private static void SystemParameters_StaticPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is not (null or nameof(SystemParameters.HighContrast))) return;
+        foreach (Window window in Current.Windows)
+        {
+            ApplySystemPalette(window, SystemParameters.HighContrast);
+            if (window is SourcesWindow sources) sources.RefreshValidationTheme();
+        }
     }
 
     private static void ApplyHighContrast(object sender, RoutedEventArgs e)
     {
-        if (!SystemParameters.HighContrast || sender is not Window window) return;
-        window.Background = SystemColors.WindowBrush;
-        window.Foreground = SystemColors.WindowTextBrush;
-        ApplyHighContrastToTree(window);
+        if (sender is Window window) ApplySystemPalette(window, SystemParameters.HighContrast);
     }
 
-    private static void ApplyHighContrastToTree(DependencyObject parent)
+    internal static void ApplySystemPalette(Window window, bool highContrast)
     {
-        var foreground = SystemColors.WindowTextBrush;
-        var background = SystemColors.WindowBrush;
-        if (parent is TextBlock text) text.Foreground = foreground;
-        if (parent is Control control)
+        SetOrRestore(window, Control.ForegroundProperty, highContrast ? SystemColors.WindowTextBrush : null);
+        SetOrRestore(window, Control.BackgroundProperty, highContrast ? SystemColors.WindowBrush : null);
+        var pending = new Stack<DependencyObject>();
+        var visited = new HashSet<DependencyObject>();
+        pending.Push(window);
+        while (pending.Count > 0)
         {
-            control.Foreground = foreground;
-            control.Background = background;
-            control.BorderBrush = foreground;
+            var parent = pending.Pop();
+            if (!visited.Add(parent)) continue;
+            var foreground = highContrast ? SystemColors.WindowTextBrush : null;
+            var background = highContrast ? SystemColors.WindowBrush : null;
+            var border = highContrast ? SystemColors.WindowTextBrush : null;
+            if (parent is TextBlock text) SetOrRestore(text, TextBlock.ForegroundProperty, foreground);
+            if (parent is Control control)
+            {
+                SetOrRestore(control, Control.ForegroundProperty, foreground);
+                SetOrRestore(control, Control.BackgroundProperty, background);
+                SetOrRestore(control, Control.BorderBrushProperty, border);
+            }
+            if (parent is Border frame)
+            {
+                SetOrRestore(frame, Border.BackgroundProperty, background);
+                SetOrRestore(frame, Border.BorderBrushProperty, border);
+            }
+            if (parent is Visual or System.Windows.Media.Media3D.Visual3D)
+                for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++) pending.Push(VisualTreeHelper.GetChild(parent, i));
+            if (parent is FrameworkElement or FrameworkContentElement)
+                foreach (var child in LogicalTreeHelper.GetChildren(parent).OfType<DependencyObject>()) pending.Push(child);
         }
-        if (parent is Border border)
-        {
-            border.Background = background;
-            border.BorderBrush = foreground;
-        }
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++) ApplyHighContrastToTree(VisualTreeHelper.GetChild(parent, i));
+    }
+
+    private static void SetOrRestore(DependencyObject item, DependencyProperty property, Brush? overrideBrush)
+    {
+        var colors = OriginalColors.GetOrCreateValue(item);
+        if (!colors.ContainsKey(property)) colors[property] = item.GetValue(property);
+        item.SetCurrentValue(property, overrideBrush ?? (Brush?)colors[property]);
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

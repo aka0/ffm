@@ -1,14 +1,17 @@
 namespace FFM.App.Services;
 
+public enum HairstylePreset { KeepCurrent, BuzzCut, CrewCut, TexturedCrop, Ponytail, Braids }
+public enum FacialHairPreset { KeepCurrent, LightStubble, HeavyStubble, ShortBeard, FullBeard, Goatee, CircleBeard, VanDyke, Balbo }
+
 public static class PortraitPromptBuilder
 {
-    public static string Build(string? hairstyle, string? facialHair, int? playerAge, int? targetAge)
+    public static string Build(HairstylePreset hairstyle, FacialHairPreset facialHair, int? playerAge, int? targetAge)
     {
         var changes = new List<string>();
-        var hairUnspecified = string.IsNullOrWhiteSpace(hairstyle) || hairstyle.StartsWith("Keep", StringComparison.OrdinalIgnoreCase);
-        var beardUnspecified = string.IsNullOrWhiteSpace(facialHair) || facialHair.StartsWith("Keep", StringComparison.OrdinalIgnoreCase);
-        if (!hairUnspecified) changes.Add(HairstyleInstruction(hairstyle!));
-        if (!beardUnspecified) changes.Add(FacialHairInstruction(facialHair!));
+        var hairUnspecified = hairstyle == HairstylePreset.KeepCurrent;
+        var beardUnspecified = facialHair == FacialHairPreset.KeepCurrent;
+        if (!hairUnspecified) changes.Add(HairstyleInstruction(hairstyle));
+        if (!beardUnspecified) changes.Add(FacialHairInstruction(facialHair) + " Keep the facial-hair color natural and matching the hair color.");
         if (playerAge is int age && targetAge is int desired && desired > age)
         {
             var years = desired - age;
@@ -19,28 +22,27 @@ public static class PortraitPromptBuilder
                " Preserve the same person's identity, facial structure, pose, expression, clothing, crop, lighting, background and aspect ratio. Return a PNG. Preserve real alpha transparency where present; do not flatten it onto black, white, a colored matte or a checkerboard. Keep clean natural hair and skin edges with smooth antialiasing: no outline, stroke, black halo, colored fringe, isolated bright/red edge pixels or oversharpened border. Do not add text, watermark, frame, padding or collage.";
     }
 
-    private static string HairstyleInstruction(string style) => style switch
+    private static string HairstyleInstruction(HairstylePreset style) => style switch
     {
-        "Buzz cut" => "Change the hairstyle to an even close buzz cut with clean natural edges.",
-        "Crew cut" => "Change the hairstyle to a short crew cut with a slightly longer top and softly tapered sides.",
-        "Textured crop" => "Change the hairstyle to a short textured crop with a natural forward fringe and tapered sides.",
-        "Undercut" => "Change the hairstyle to an undercut with longer hair on top and neatly shorter sides.",
-        "Slicked back" => "Change the hairstyle to medium-length hair swept back naturally, without a wet or exaggerated shine.",
-        "Long tied back" => "Change the hairstyle to longer hair tied back neatly, preserving a realistic hairline and natural texture.",
-        _ => $"Change the hairstyle to a natural {style.ToLowerInvariant()}, preserving plausible hair color and texture."
+        HairstylePreset.BuzzCut => "Change the hairstyle to an even close buzz cut with clean natural edges.",
+        HairstylePreset.CrewCut => "Change the hairstyle to a short crew cut with a slightly longer top and softly tapered sides.",
+        HairstylePreset.TexturedCrop => "Change the hairstyle to a short textured crop with a natural forward fringe and tapered sides.",
+        HairstylePreset.Ponytail => "Change the hairstyle to a natural ponytail with realistic hair texture and a believable hairline.",
+        HairstylePreset.Braids => "Change the hairstyle to neat, natural-looking braids suited to the player's existing hair length and texture.",
+        _ => throw new ArgumentOutOfRangeException(nameof(style))
     };
 
-    private static string FacialHairInstruction(string style) => style switch
+    private static string FacialHairInstruction(FacialHairPreset style) => style switch
     {
-        "Light stubble" => "Add neat, very short light stubble across the natural beard area.",
-        "Heavy stubble" => "Add even heavy stubble with clearly visible short beard growth.",
-        "Short beard" => "Add a neatly trimmed short beard with natural cheek and neckline edges.",
-        "Full beard" => "Add a full, well-groomed beard with natural density and edges.",
-        "Goatee" => "Add a tidy goatee around the chin, with the cheeks clean-shaven.",
-        "Circle beard" => "Add a connected moustache and chin beard forming a neat circle beard.",
-        "Van Dyke" => "Add a distinct moustache and pointed chin beard with clean-shaven cheeks.",
-        "Balbo" => "Add a shaped chin beard with a separate moustache and clean-shaven cheeks.",
-        _ => $"Change the facial hair to a natural {style.ToLowerInvariant()} with realistic density and edges."
+        FacialHairPreset.LightStubble => "Add neat, very short light stubble across the natural beard area.",
+        FacialHairPreset.HeavyStubble => "Add even heavy stubble with clearly visible short beard growth.",
+        FacialHairPreset.ShortBeard => "Add a neatly trimmed short beard with natural cheek and neckline edges.",
+        FacialHairPreset.FullBeard => "Add a full, well-groomed beard with natural density and edges.",
+        FacialHairPreset.Goatee => "Add a tidy goatee around the chin, with the cheeks clean-shaven.",
+        FacialHairPreset.CircleBeard => "Add a connected moustache and chin beard forming a neat circle beard.",
+        FacialHairPreset.VanDyke => "Add a distinct moustache and pointed chin beard with clean-shaven cheeks.",
+        FacialHairPreset.Balbo => "Add a shaped chin beard with a separate moustache and clean-shaven cheeks.",
+        _ => throw new ArgumentOutOfRangeException(nameof(style))
     };
 
     private static string AgeVariationInstruction(int years, bool hairUnspecified, bool beardUnspecified)

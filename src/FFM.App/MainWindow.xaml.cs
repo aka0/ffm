@@ -24,6 +24,7 @@ internal sealed record FfmSettings(string? GraphicsRoot, string? SavePath, doubl
 
 public partial class MainWindow : Window
 {
+    internal static Action<string> ClipboardTextWriter { get; set; } = Clipboard.SetText;
     private readonly SaveScanService _scanner = new();
     private readonly string _dataRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FFM");
     private string _savePath = "";
@@ -45,6 +46,7 @@ public partial class MainWindow : Window
     private bool _isImporting;
     private bool _isPreparing;
     private CancellationTokenSource? _importCancellation;
+    private CancellationTokenSource? _prepareCancellation;
     private Point _dragStart;
     private bool _updatingEdges;
     private readonly DispatcherTimer _searchTimer;
@@ -68,8 +70,8 @@ public partial class MainWindow : Window
         Activity.Text = "Checking previous portrait operations…";
         Loaded += VerifyRecoveryAsync;
         var preferences = Path.Combine(_dataRoot, "browser-provider.txt");
-        if (File.Exists(preferences) && File.ReadAllText(preferences).Trim() == "Grok") _provider = "Grok";
-        ProviderButton.Content = "AI _provider";
+        if (File.Exists(preferences)) _provider = AiProviders.Find(File.ReadAllText(preferences).Trim()).Name;
+        ProviderButton.Content = "AI p_rovider";
         OpenProviderButton.Content = "_Open " + _provider;
         var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var game = Path.Combine(docs, "Sports Interactive", "Football Manager 27");
@@ -201,11 +203,12 @@ public partial class MainWindow : Window
 
     private void CancelLoad_Click(object sender, RoutedEventArgs e)
     {
+        if (_isPreparing) { _prepareCancellation?.Cancel(); return; }
         _loadCancellation?.Cancel();
         _importCancellation?.Cancel();
     }
 
-    private void ShowRecoveryErrors(IReadOnlyList<string> errors)
+    private void ShowRecoveryErrors(IReadOnlyList<string> errors, int rolledBack = 0)
     {
         _recoveryErrors = errors;
         _recoveryBlocked = errors.Count > 0;
@@ -214,6 +217,7 @@ public partial class MainWindow : Window
             ? "Portrait recovery needs attention. Editing is paused; inspect the journal and retry recovery. " + string.Join(" · ", errors.Select(error => error.Split(':')[0]))
             : "Portrait recovery completed.";
         RecoveryDetails.ToolTip = string.Join(Environment.NewLine, errors);
+        RecoveryBanner.ToolTip = rolledBack > 0 ? $"{rolledBack} interrupted portrait operation(s) were safely rolled back." : null;
         UpdatePreviewAvailability();
     }
 
@@ -234,12 +238,12 @@ public partial class MainWindow : Window
         {
             var recovery = await Task.Run(() =>
             {
-                var errors = PortraitCommitService.Recover(_dataRoot);
+                var recovery = PortraitCommitService.RecoverDetailed(_dataRoot);
                 PortraitCommitService.PruneTemporaryData(_dataRoot);
-                return errors;
+                return recovery;
             });
-            ShowRecoveryErrors(recovery);
-            Activity.Text = _recoveryBlocked ? "Recovery needs attention. Editing is paused until it succeeds." : "Ready";
+            ShowRecoveryErrors(recovery.Errors, recovery.RolledBackOperations);
+            Activity.Text = _recoveryBlocked ? "Recovery needs attention. Editing is paused until it succeeds." : recovery.RolledBackOperations > 0 ? $"Recovered and rolled back {recovery.RolledBackOperations} interrupted portrait operation(s)." : "Ready";
         }
         catch (Exception ex) { ShowRecoveryErrors(["Could not inspect portrait operations: " + Friendly(ex)]); }
     }
@@ -251,9 +255,9 @@ public partial class MainWindow : Window
         Activity.Text = "Retrying portrait recovery…";
         try
         {
-            var recovery = await Task.Run(() => PortraitCommitService.Recover(_dataRoot));
-            ShowRecoveryErrors(recovery);
-            Activity.Text = _recoveryBlocked ? "Recovery is still blocked. The transaction folder and numbered backups were retained." : "Recovery completed. Portrait editing is available again.";
+            var recovery = await Task.Run(() => PortraitCommitService.RecoverDetailed(_dataRoot));
+            ShowRecoveryErrors(recovery.Errors, recovery.RolledBackOperations);
+            Activity.Text = _recoveryBlocked ? "Recovery is still blocked. The transaction folder and numbered backups were retained." : recovery.RolledBackOperations > 0 ? $"Recovery completed; rolled back {recovery.RolledBackOperations} interrupted operation(s). Portrait editing is available." : "Recovery completed. Portrait editing is available again.";
         }
         catch (Exception ex) { ShowRecoveryErrors(["Recovery could not be completed: " + Friendly(ex)]); }
     }
@@ -262,6 +266,7 @@ public partial class MainWindow : Window
     {
         _loadCancellation?.Cancel();
         _importCancellation?.Cancel();
+        _prepareCancellation?.Cancel();
         _searchTimer.Stop();
         _preparedSession?.Dispose();
         SaveWindowSettings();
@@ -438,8 +443,8 @@ public partial class MainWindow : Window
     private bool HasRequestedChanges()
     {
         if (_currentPortrait is null || PromptBox is null) return false;
-        var hair = (HairstyleBox.SelectedItem as ComboBoxItem)?.Content?.ToString();
-        var beard = (BeardBox.SelectedItem as ComboBoxItem)?.Content?.ToString();
+        var hair = SelectedPreset(HairstyleBox, HairstylePreset.KeepCurrent);
+        var beard = SelectedPreset(BeardBox, FacialHairPreset.KeepCurrent);
         var age = (PlayerList.SelectedItem as PlayerItem)?.Age;
         var targetAge = AgeBox.SelectedItem is ComboBoxItem { Tag: int target } ? target : (int?)null;
         if (_customPrompt)
@@ -447,15 +452,19 @@ public partial class MainWindow : Window
             var generated = PortraitPromptBuilder.Build(hair, beard, age, targetAge);
             return !string.IsNullOrWhiteSpace(PromptBox.Text) && !string.Equals(PromptBox.Text.Trim(), generated.Trim(), StringComparison.Ordinal);
         }
-        return (!string.IsNullOrWhiteSpace(hair) && !hair.StartsWith("Keep", StringComparison.OrdinalIgnoreCase)) ||
-               (!string.IsNullOrWhiteSpace(beard) && !beard.StartsWith("Keep", StringComparison.OrdinalIgnoreCase)) ||
+        return hair != HairstylePreset.KeepCurrent || beard != FacialHairPreset.KeepCurrent ||
                (age.HasValue && targetAge.HasValue && targetAge > age);
+    }
+    private static T SelectedPreset<T>(ComboBox box, T fallback) where T : struct, Enum
+    {
+        var tag = (box.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        return Enum.TryParse<T>(tag, ignoreCase: false, out var value) ? value : fallback;
     }
     private void UpdatePrompt()
     {
         if (PromptBox is null || _customPrompt) return;
-        var hair = (HairstyleBox.SelectedItem as ComboBoxItem)?.Content?.ToString();
-        var beard = (BeardBox.SelectedItem as ComboBoxItem)?.Content?.ToString();
+        var hair = SelectedPreset(HairstyleBox, HairstylePreset.KeepCurrent);
+        var beard = SelectedPreset(BeardBox, FacialHairPreset.KeepCurrent);
         var targetAge = AgeBox?.SelectedItem is ComboBoxItem { Tag: int target } ? target : (int?)null;
         var playerAge = (PlayerList.SelectedItem as PlayerItem)?.Age;
         _updatingPrompt = true;
@@ -486,15 +495,15 @@ public partial class MainWindow : Window
         PreviewStatus.Text = _currentPortrait is null ? "Select a mapped player portrait to begin." : "Paste or drop the edited image here to review it.";
         UpdatePreviewAvailability();
     }
-    private PortraitEditSession PrepareSession(string prompt)
-    {
-        if (_recoveryBlocked || PlayerList.SelectedItem is not PlayerItem player || _currentPortrait is null) throw new InvalidOperationException("Select a mapped newgen portrait first.");
-        var mapping = _facepack?.Find(player.Id).SingleOrDefault() ?? throw new InvalidOperationException("The selected player's mapping is unavailable.");
-        return PortraitEditSession.Prepare(player.Id, _graphicsRoot, mapping, prompt, _dataRoot);
-    }
     private async Task<PortraitEditSession> PrepareSessionAsync(string prompt)
     {
         if (_isPreparing) throw new InvalidOperationException("FFM is already preparing this portrait.");
+        if (_recoveryBlocked || PlayerList.SelectedItem is not PlayerItem player || _currentPortrait is null) throw new InvalidOperationException("Select a mapped newgen portrait first.");
+        var mapping = _facepack?.Find(player.Id).SingleOrDefault() ?? throw new InvalidOperationException("The selected player's mapping is unavailable.");
+        var graphicsRoot = _graphicsRoot;
+        var dataRoot = _dataRoot;
+        var cancellation = new CancellationTokenSource();
+        _prepareCancellation = cancellation;
         _isPreparing = true;
         UpdatePreviewAvailability();
         LoadProgress.IsIndeterminate = true;
@@ -502,9 +511,11 @@ public partial class MainWindow : Window
         LoadStatus.Text = "Preparing portrait and checking previous versions…";
         CancelLoadButton.Visibility = Visibility.Visible;
         CancelLoadButton.Content = "Cancel";
-        try { return await Task.Run(() => PrepareSession(prompt)); }
+        try { return await Task.Run(() => PortraitEditSession.Prepare(player.Id, graphicsRoot, mapping, prompt, dataRoot, cancellation.Token), cancellation.Token); }
         finally
         {
+            if (ReferenceEquals(_prepareCancellation, cancellation)) _prepareCancellation = null;
+            cancellation.Dispose();
             _isPreparing = false;
             LoadProgress.IsIndeterminate = false;
             LoadPercent.Text = "0%";
@@ -532,14 +543,15 @@ public partial class MainWindow : Window
         Activity.Text = "Edited image imported. Original dimensions and cutout transparency are preserved." + (session.EdgeCleanupEnabled ? $" Edge cleanup corrected {session.CorrectedEdgePixels:N0} pixels near the silhouette." : " Edge cleanup is off.");
         UpdatePreviewAvailability();
     }
-    private async void Preview_Click(object sender, RoutedEventArgs e)
+    private async void Preview_Click(object sender, RoutedEventArgs e) => await CopyImagePathAsync();
+    internal async Task CopyImagePathAsync()
     {
         if (!PreviewButton.IsEnabled) return;
         PortraitEditSession? session = null;
         try
         {
             session = await PrepareSessionAsync(PromptBox.Text);
-            Clipboard.SetText(PortraitClipboard.OriginalFilePath(session));
+            ClipboardTextWriter(PortraitClipboard.OriginalFilePath(session));
             RejectPending();
             _preparedSession = session;
             session = null;
@@ -556,7 +568,7 @@ public partial class MainWindow : Window
     }
     private async void CopyPromptOnly_Click(object sender, RoutedEventArgs e)
     {
-        try { Clipboard.SetText((_preparedSession ??= await PrepareSessionAsync(PromptBox.Text)).Prompt); UpdatePreviewAvailability(); Activity.Text = "Prompt copied. Paste it beside the attached original portrait in your browser chat."; }
+        try { ClipboardTextWriter((_preparedSession ??= await PrepareSessionAsync(PromptBox.Text)).Prompt); UpdatePreviewAvailability(); Activity.Text = "Prompt copied. Paste it beside the attached original portrait in your browser chat."; }
         catch (Exception ex) { Activity.Text = Friendly(ex); }
     }
     private async void Paste_Click(object sender, RoutedEventArgs e) => await PasteImageAsync();
@@ -569,6 +581,28 @@ public partial class MainWindow : Window
             await ImportTransferAsync(data);
         }
         catch (Exception ex) { Activity.Text = "Could not paste the image: " + Friendly(ex); }
+    }
+    private Task<bool> ConfirmRemoteImageAsync(Uri uri)
+    {
+        var answer = MessageBox.Show(this, $"FFM found an image link from {uri.IdnHost}. Fetch this image?", "Confirm image download", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        return Task.FromResult(answer == MessageBoxResult.Yes);
+    }
+    private async Task<bool> ImportIntoSessionAsync(PortraitEditSession session, byte[] bytes, bool cleanEdges)
+    {
+        try
+        {
+            await Task.Run(() => session.ImportBytes(bytes, cleanEdges));
+            return true;
+        }
+        catch (PortraitCutoutRequiredException)
+        {
+            var answer = MessageBox.Show(this,
+                "This image does not preserve enough of the original transparent cutout. Use the original cutout instead? FFM will keep the original alpha shape and apply only the image colors.",
+                "Use original cutout", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes) return false;
+            await Task.Run(() => session.ImportBytes(bytes, cleanEdges, useOriginalCutout: true));
+            return true;
+        }
     }
     private async Task ImportTransferAsync(IDataObject data)
     {
@@ -591,10 +625,10 @@ public partial class MainWindow : Window
         var imported = false;
         try
         {
-            var bytes = await PortraitClipboard.ReadImageAsync(data, _importCancellation.Token);
+            var bytes = await PortraitClipboard.ReadImageAsync(data, _importCancellation.Token, confirmRemote: ConfirmRemoteImageAsync);
             if (!ReferenceEquals(_preparedSession, session)) throw new InvalidOperationException("The player or changes have changed. Copy the current portrait and prompt again.");
             var cleanEdges = CleanEdgesBox.IsChecked == true;
-            await Task.Run(() => session.ImportBytes(bytes, cleanEdges));
+            if (!await ImportIntoSessionAsync(session, bytes, cleanEdges)) { Activity.Text = "Image import canceled. No portrait was changed."; return; }
             ShowPending(session);
             imported = true;
         }
@@ -672,7 +706,7 @@ public partial class MainWindow : Window
     private void Original_MouseDown(object sender, MouseButtonEventArgs e) => _dragStart = e.GetPosition(OriginalImage);
     private async void Original_MouseMove(object sender, MouseEventArgs e)
     {
-        if (e.LeftButton != MouseButtonState.Pressed || _currentPortrait is null || _isApplying || _isImporting) return;
+        if (e.LeftButton != MouseButtonState.Pressed || _currentPortrait is null || _isApplying || _isImporting || _isPreparing) return;
         var position = e.GetPosition(OriginalImage);
         if (Math.Abs(position.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(position.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
         try
@@ -699,7 +733,7 @@ public partial class MainWindow : Window
     private void SaveProvider()
     {
         File.WriteAllText(Path.Combine(_dataRoot, "browser-provider.txt"), _provider);
-        ProviderButton.Content = "AI _provider";
+        ProviderButton.Content = "AI p_rovider";
         PreviewButton.Content = "Copy _image path";
         OpenProviderButton.Content = "_Open " + _provider;
     }
@@ -751,9 +785,10 @@ public partial class MainWindow : Window
             _pendingSession = null;
             ReportLoad(new ScanProgress(0, "Portrait was not accepted"));
             Activity.Text = Friendly(ex);
-            var recovery = PortraitCommitService.Recover(_dataRoot);
-            ShowRecoveryErrors(recovery);
-            if (_recoveryBlocked) Activity.Text += " Recovery needs attention; backups are retained. " + string.Join(" ", recovery);
+            var recovery = PortraitCommitService.RecoverDetailed(_dataRoot);
+            ShowRecoveryErrors(recovery.Errors, recovery.RolledBackOperations);
+            if (_recoveryBlocked) Activity.Text += " Recovery needs attention; backups are retained. " + string.Join(" ", recovery.Errors);
+            else if (recovery.RolledBackOperations > 0) Activity.Text += $" {recovery.RolledBackOperations} interrupted operation(s) were rolled back.";
         }
         finally
         {
@@ -767,10 +802,10 @@ public partial class MainWindow : Window
     private async void History_Click(object sender, RoutedEventArgs e)
     {
         if (_currentPortrait is null || PortraitCommitService.Versions(_currentPortrait).Count == 0) return;
-        var dialog = new HistoryWindow(_currentPortrait) { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.SelectedPath is null) return;
         try
         {
+            var dialog = new HistoryWindow(_currentPortrait) { Owner = this };
+            if (dialog.ShowDialog() != true || dialog.SelectedPath is null) return;
             var session = await PrepareSessionAsync("Restore the selected previous portrait.");
             _isImporting = true;
             UpdatePreviewAvailability();
@@ -789,8 +824,14 @@ public partial class MainWindow : Window
             e.Cancel = true;
             Activity.Text = "Wait for the portrait update to finish before closing FFM.";
         }
+        if (_isPreparing)
+        {
+            e.Cancel = true;
+            _prepareCancellation?.Cancel();
+            Activity.Text = "Canceling portrait preparation. Wait for it to finish before closing FFM.";
+        }
         base.OnClosing(e);
-        if (_isApplying) e.Cancel = true;
+        if (_isApplying || _isPreparing) e.Cancel = true;
     }
 }
 

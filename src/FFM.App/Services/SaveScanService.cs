@@ -247,9 +247,12 @@ public sealed class SaveScanService
         if (outputLimit <= 0 || outputLimit > limit || outputLimit > int.MaxValue) throw new InvalidDataException($"The {section} section exceeds the supported safety limit.");
         var declared = Decompressor.GetDecompressedSize(compressed);
         if (declared != 0 && declared != ulong.MaxValue && declared > (ulong)limit) throw new InvalidDataException($"The {section} frame declares {declared:N0} output bytes, above the {limit:N0}-byte safety limit.");
-        var decoded = decompressor.Unwrap(compressed, (int)outputLimit);
-        if (decoded.Length == 0 || decoded.Length > outputLimit) throw new InvalidDataException($"The {section} section decoded outside the supported size range.");
-        return decoded.ToArray();
+        var destinationLength = declared is not (0 or ulong.MaxValue) ? checked((int)declared) : checked((int)outputLimit);
+        var decoded = new byte[destinationLength];
+        var written = decompressor.Unwrap(compressed.AsSpan(), decoded.AsSpan());
+        if (written <= 0 || written > outputLimit) throw new InvalidDataException($"The {section} section decoded outside the supported size range.");
+        if (written != decoded.Length) Array.Resize(ref decoded, written);
+        return decoded;
     }
 
     private static byte[] Concat(byte[] left, byte[] right)

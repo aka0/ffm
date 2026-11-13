@@ -7,17 +7,32 @@ namespace FFM.App;
 
 public partial class HistoryWindow : Window
 {
-    private sealed record VersionItem(PortraitVersion Version) { public string Label => $"Version {Version.Number} · {File.GetLastWriteTime(Version.Path):g}"; }
+    private sealed record VersionItem(PortraitVersion Version, DateTime LastWriteTime) { public string Label => $"Version {Version.Number} · {LastWriteTime:g}"; }
     private int _previewRequest;
+    private readonly string _imagePath;
     public string? SelectedPath => (VersionsList.SelectedItem as VersionItem)?.Version.Path;
     public HistoryWindow(string image)
     {
         InitializeComponent();
-        CurrentImage.Source = PortraitEditSession.LoadBitmap(image);
-        var versions = PortraitCommitService.Versions(image).Select(v => new VersionItem(v)).ToArray();
-        VersionsList.ItemsSource = versions;
-        EmptyState.Visibility = versions.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (versions.Length == 0) PreviewStatus.Text = "There are no previous portraits to compare.";
+        _imagePath = image;
+        PreviewStatus.Text = "Loading portrait history…";
+        Loaded += LoadHistoryAsync;
+    }
+    private async void LoadHistoryAsync(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var (current, versions) = await Task.Run(() => (PortraitEditSession.LoadBitmap(_imagePath), PortraitCommitService.Versions(_imagePath).Select(v => new VersionItem(v, File.GetLastWriteTime(v.Path))).ToArray()));
+            CurrentImage.Source = current;
+            VersionsList.ItemsSource = versions;
+            EmptyState.Visibility = versions.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+            PreviewStatus.Text = versions.Length == 0 ? "There are no previous portraits to compare." : "Select a previous portrait to compare.";
+        }
+        catch (Exception ex)
+        {
+            PreviewStatus.Text = "Could not load portrait history: " + FriendlyErrors.Message(ex);
+            ReviewButton.IsEnabled = false;
+        }
     }
     private async void Version_Changed(object sender, SelectionChangedEventArgs e)
     {

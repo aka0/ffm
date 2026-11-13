@@ -18,6 +18,8 @@ jobs:
         run: dotnet build src/FFM.App/FFM.App.csproj --no-restore -warnaserror
       - name: Edit checks
         run: dotnet run --project src/FFM.EditCheck
+      - name: WPF UI checks
+        run: dotnet run --project src/FFM.UiCheck
       - name: Facepack checks
         run: dotnet run --project src/FFM.FacepackCheck
       - name: Synthetic save-reader checks

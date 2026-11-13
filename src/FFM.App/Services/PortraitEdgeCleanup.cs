@@ -3,7 +3,7 @@ namespace FFM.App.Services;
 /// <summary>Conservative cutout-edge correction on straight BGRA pixels; no face-wide color filtering.</summary>
 public static class PortraitEdgeCleanup
 {
-    public static byte[] Apply(byte[] original, byte[] edited, int width, int height, bool cleanEdges, out int correctedPixels, byte[]? edgeReference = null)
+    public static byte[] Apply(byte[] original, byte[] edited, int width, int height, bool cleanEdges, out int correctedPixels, byte[]? edgeReference = null, bool useOriginalCutout = false)
     {
         if (width <= 0 || height <= 0 || original.Length != checked(width * height * 4) || edited.Length != original.Length) throw new ArgumentException("Invalid portrait pixel buffers.");
         if (edgeReference is not null)
@@ -18,9 +18,10 @@ public static class PortraitEdgeCleanup
         var allowed = new bool[distance.Length];
         for (var p = 0; p < allowed.Length; p++) allowed[p] = original[p * 4 + 3] > 0;
         var outputAlpha = new byte[distance.Length];
+        var useEditedAlpha = editedHasTransparency && !useOriginalCutout;
         for (var p = 0; p < distance.Length; p++)
         {
-            outputAlpha[p] = editedHasTransparency ? allowed[p] ? edited[p * 4 + 3] : (byte)0 : original[p * 4 + 3];
+            outputAlpha[p] = useEditedAlpha ? allowed[p] ? edited[p * 4 + 3] : (byte)0 : original[p * 4 + 3];
             distance[p] = outputAlpha[p] == 0 ? (byte)0 : (byte)4;
         }
         if (cleanEdges)
@@ -53,7 +54,7 @@ public static class PortraitEdgeCleanup
                 continue;
             }
             // Never reveal undefined generated RGB at a transparent source edge.
-            var missingColor = editedHasTransparency && editedAlpha < Math.Min(sourceAlpha, (byte)16);
+            var missingColor = useEditedAlpha && editedAlpha < Math.Min(sourceAlpha, (byte)16);
             var weight = missingColor ? 1d : !cleanEdges ? 0 : distance[p] <= 2 ? 1 : distance[p] == 3 ? 0.5 : 0;
             var changed = false;
             var reference = cleanEdges && distance[p] <= 3 ? edgeReference ?? original : original;

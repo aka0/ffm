@@ -33,9 +33,23 @@ internal static class ImageTransferChecks
             return response;
         });
         using var http = new HttpClient(handler);
-        Check(Read(remote, http).SequenceEqual(bytes), "public HTTPS image link imports through bounded image download");
+        Check(Read(remote, http).SequenceEqual(bytes), "public HTTPS image link imports through bounded image download after host confirmation");
+        Throws(() => PortraitClipboard.ReadImageAsync(remote, downloads: http, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") })).GetAwaiter().GetResult(), "remote image URLs are not fetched without confirmation");
+        var declinedRequests = 0;
+        using var declinedHttp = new HttpClient(new Handler(_ => { declinedRequests++; return new(HttpStatusCode.OK); }));
+        Throws(() => PortraitClipboard.ReadImageAsync(remote, downloads: declinedHttp, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") }), confirmRemote: _ => Task.FromResult(false)).GetAwaiter().GetResult(), "declining remote-image confirmation prevents the request");
+        Check(declinedRequests == 0, "declined remote-image confirmation makes no HTTP request");
+        var remoteHtml = new DataObject(DataFormats.Html, "<img src=\"https://images.example.test/finished.png\">");
+        var htmlPrompted = false;
+        Throws(() => PortraitClipboard.ReadImageAsync(remoteHtml, downloads: http, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") }), confirmRemote: _ => { htmlPrompted = true; return Task.FromResult(false); }).GetAwaiter().GetResult(), "remote HTML image sources require an explicit confirmation");
+        Check(htmlPrompted, "HTML image downloads show their host confirmation before fetching");
         Throws(() => Read(new DataObject(DataFormats.UnicodeText, "https://192.168.1.20/image.png"), http), "literal private-network image URLs are rejected before HTTP");
-        Throws(() => PortraitClipboard.ReadImageAsync(remote, downloads: http, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("10.2.3.4") })).GetAwaiter().GetResult(), "DNS names resolving to private addresses are rejected");
+        Throws(() => PortraitClipboard.ReadImageAsync(remote, downloads: http, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("10.2.3.4") }), confirmRemote: _ => Task.FromResult(true)).GetAwaiter().GetResult(), "DNS names resolving to private addresses are rejected");
+        var connectAttempted = false;
+        Throws(() => PortraitClipboard.ConnectToPublicHostAsync("rebind.example.test", 443, CancellationToken.None,
+            (_, _) => Task.FromResult(new[] { IPAddress.Parse("127.0.0.1") }),
+            (_, _, _) => { connectAttempted = true; return Task.FromResult<Stream>(new MemoryStream()); }).GetAwaiter().GetResult(), "DNS rebinding to loopback is rejected at socket connection time");
+        Check(!connectAttempted, "socket callback never connects to a rebinding private address");
         using var privateHttp = new HttpClient(new Handler(_ => new(HttpStatusCode.Unauthorized)));
         Throws(() => Read(remote, privateHttp), "private browser links fail with copy-image/file guidance");
         using var redirectHttp = new HttpClient(new Handler(_ => new(HttpStatusCode.Redirect) { Headers = { Location = new Uri("http://example.test/image.png") } }));
@@ -55,7 +69,7 @@ internal static class ImageTransferChecks
         using var slowHttp = new HttpClient(new Handler(_ => new(HttpStatusCode.OK) { Content = new SlowContent() }));
         using (var slowToken = new CancellationTokenSource(TimeSpan.FromMilliseconds(100)))
         {
-            try { PortraitClipboard.ReadImageAsync(remote, slowToken.Token, slowHttp, (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") })).GetAwaiter().GetResult(); throw new Exception("FAIL: stalled response body can be cancelled"); }
+            try { PortraitClipboard.ReadImageAsync(remote, slowToken.Token, slowHttp, (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") }), _ => Task.FromResult(true)).GetAwaiter().GetResult(); throw new Exception("FAIL: stalled response body can be cancelled"); }
             catch (OperationCanceledException) { Console.WriteLine("PASS: stalled response bodies observe import cancellation"); }
         }
         Throws(() => Read(new DataObject(DataFormats.UnicodeText, "blob:https://chatgpt.com/private-image")), "browser-private blob URLs do not cause hidden authentication attempts");
@@ -89,7 +103,7 @@ internal static class ImageTransferChecks
         static void Set(byte[] data, int x, int y, byte b, byte g, byte r, byte a) { var at = (y * size + x) * 4; data[at] = b; data[at + 1] = g; data[at + 2] = r; data[at + 3] = a; }
         static bool EqualPixel(byte[] a, byte[] b, int x, int y) => a.AsSpan((y * size + x) * 4, 4).SequenceEqual(b.AsSpan((y * size + x) * 4, 4));
     }
-    private static byte[] Read(IDataObject data, HttpClient? client = null) => PortraitClipboard.ReadImageAsync(data, downloads: client, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") })).GetAwaiter().GetResult();
+    private static byte[] Read(IDataObject data, HttpClient? client = null) => PortraitClipboard.ReadImageAsync(data, downloads: client, resolveHost: (_, _) => Task.FromResult(new[] { IPAddress.Parse("93.184.216.34") }), confirmRemote: _ => Task.FromResult(true)).GetAwaiter().GetResult();
     private static void Check(bool condition, string message) { if (!condition) throw new Exception("FAIL: " + message); Console.WriteLine("PASS: " + message); }
     private static void Throws(Action action, string message)
     {

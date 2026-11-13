@@ -13,6 +13,7 @@ public partial class ConfigIssuesWindow : Window
 
     private void Copy_Click(object sender, RoutedEventArgs e)
     {
-        Clipboard.SetText(IssuesText.Text);
+        try { Clipboard.SetText(IssuesText.Text); CopyStatus.Text = "Config details copied."; }
+        catch (Exception ex) { CopyStatus.Text = FriendlyErrors.Message(ex); }
     }
 }

@@ -41,31 +41,41 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True"/>
+                        <Border x:Name="FocusWhite" BorderBrush="Transparent" BorderThickness="2" CornerRadius="8">
+                            <Border x:Name="FocusRing" BorderBrush="Transparent" BorderThickness="1" CornerRadius="7">
+                                <Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True"/>
+                                </Border>
+                            </Border>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="#006B62"/><Setter TargetName="Chrome" Property="BorderThickness" Value="2"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="FocusWhite" Property="BorderBrush" Value="White"/><Setter TargetName="FocusRing" Property="BorderBrush" Value="#003F39"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#EAF4F2"/></Trigger>
-                <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#D6EBE7"/></Trigger>
+                <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsEnabled" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions><Setter Property="Background" Value="#EAF4F2"/></MultiTrigger>
+                <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsEnabled" Value="True"/><Condition Property="IsPressed" Value="True"/></MultiTrigger.Conditions><Setter Property="Background" Value="#D6EBE7"/></MultiTrigger>
                 <Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="#E6ECEC"/><Setter Property="BorderBrush" Value="#D5DEDE"/><Setter Property="Foreground" Value="#6B7C80"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="{StaticResource Teal}"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderBrush" Value="{StaticResource Teal}"/>
-            <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#116D65"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#0C5A53"/></Trigger></Style.Triggers>
+            <Style.Triggers>
+                <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsEnabled" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions><Setter Property="Background" Value="#116D65"/></MultiTrigger>
+                <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsEnabled" Value="True"/><Condition Property="IsPressed" Value="True"/></MultiTrigger.Conditions><Setter Property="Background" Value="#0C5A53"/></MultiTrigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="Secondary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#147C73"/><Setter Property="BorderBrush" Value="#B8CECA"/>
         </Style>
         <Style x:Key="Danger" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#A33D3D"/><Setter Property="BorderBrush" Value="#D8B4B4"/>
-            <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#FCF0F0"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#F6DEDE"/></Trigger></Style.Triggers>
+            <Style.Triggers>
+                <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsEnabled" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions><Setter Property="Background" Value="#FCF0F0"/></MultiTrigger>
+                <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsEnabled" Value="True"/><Condition Property="IsPressed" Value="True"/></MultiTrigger.Conditions><Setter Property="Background" Value="#F6DEDE"/></MultiTrigger>
+            </Style.Triggers>
         </Style>
     </Application.Resources>
 </Application>
